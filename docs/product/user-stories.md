@@ -367,6 +367,10 @@ keep their faces with scree below them, and the continent's boulders stand where
 deep, where its rocky biomes alone placed none (`tests/talus.rs`,
 [measurements.md](../research/measurements.md) L52,
 [#363](https://github.com/AntonTegnelov/wave_forge/issues/363)).
+The water a land drains by darkens and wets its ground along the lines it runs, and willows follow
+it: a Droplets stage gives the flow of its droplets as well as the ground they wore
+(`tests/droplets.rs`, [measurements.md](../research/measurements.md) L53,
+[#362](https://github.com/AntonTegnelov/wave_forge/issues/362)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 

@@ -446,7 +446,8 @@ pub enum StageKind {
     /// slope of one, picking up `erosion` of that room a step and dropping `deposition` of what it
     /// carries beyond it. A droplet that leaves the region stops, and the change fades in over
     /// `fade` columns from the region's edges, so regions never read each other. The product is
-    /// the worn field.
+    /// the worn field, or with `gives: Flow` the water that ran over each column, in columns'
+    /// worth of rain, fading to nothing toward the region's edges.
     Droplets {
         height: String,
         region: u32,
@@ -464,6 +465,8 @@ pub enum StageKind {
         deposition: f32,
         #[serde(default = "sixteen_columns")]
         fade: u32,
+        #[serde(default)]
+        gives: DropletsGive,
     },
     /// The `height` field weathered (docs/reference/packs.md, "Talus"): in every square region of
     /// `region` chunks, wherever a column stands above a neighbour by more than `slope` cells of
@@ -983,6 +986,16 @@ pub struct Water {
 /// a point's slot in its id is its candidate's place in the block times 256 plus its place in the
 /// group.
 pub const MAX_SCATTER_SLOTS: u32 = 256;
+
+/// What a Droplets stage's product is.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub enum DropletsGive {
+    /// The ground the droplets wore.
+    #[default]
+    Height,
+    /// The water that ran over each column.
+    Flow,
+}
 
 const fn four_columns() -> u32 {
     4
@@ -2529,6 +2542,7 @@ impl Pack {
                     erosion,
                     deposition,
                     fade: _,
+                    gives: _,
                 } => {
                     let shares = [("erosion", *erosion), ("deposition", *deposition)];
                     if let Some((name, share)) = shares

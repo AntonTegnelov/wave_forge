@@ -11,6 +11,7 @@ const PACK: &str = r#"(
     stages: [
         (name: "ground", kind: Field(Mul(Noise(frequency: 0.03, octaves: 4), Constant(30.0)))),
         (name: "worn", kind: Droplets(height: "ground", region: 4, fade: 8)),
+        (name: "flow", kind: Droplets(height: "ground", region: 4, gives: Flow, fade: 8)),
     ],
 )"#;
 
@@ -153,5 +154,92 @@ fn a_sample_of_the_worn_ground_is_what_its_chunk_holds() {
             .expect("a sample");
 
         assert_eq!(sampled.to_bits(), worn.to_bits(), "column ({x}, {y})");
+    }
+}
+
+/// Every column of the area's flow, each chunk read once its request has run, in the order of
+/// `requests`.
+fn flow_asked(requests: &[Vec<ChunkCoord>]) -> BTreeMap<(i64, i64), f32> {
+    let mut runtime = Runtime::new(Arc::new(pack(PACK).expect("a valid pack")), 6, SIZE);
+    let mut out = BTreeMap::new();
+    for request in requests {
+        let focus: Vec<FocusPoint> = request.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+        runtime.request(&focus, &["flow"]).expect("the stages");
+        runtime.run_until_idle().expect("the stages run");
+        for &chunk in request {
+            let flow = runtime.field("flow", chunk).expect("flow");
+            for y in 0..SIZE[1] {
+                for x in 0..SIZE[0] {
+                    let column = (
+                        i64::from(chunk.x) * i64::from(SIZE[0]) + i64::from(x),
+                        i64::from(chunk.y) * i64::from(SIZE[1]) + i64::from(y),
+                    );
+                    out.insert(column, flow.get(x, y));
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_flow_is_the_same_in_any_order_and_none_on_the_region_borders() {
+    let backwards: Vec<Vec<ChunkCoord>> = area().into_iter().rev().map(|c| vec![c]).collect();
+
+    let at_once = flow_asked(&[area()]);
+
+    assert_eq!(at_once, flow_asked(&backwards));
+    let on_border = |c: i64| c.rem_euclid(REGION) == 0 || c.rem_euclid(REGION) == REGION - 1;
+    for (&(x, y), &flow) in &at_once {
+        if on_border(x) || on_border(y) {
+            assert_eq!(flow, 0.0, "column ({x}, {y})");
+        }
+    }
+    assert!(at_once.values().any(|&flow| flow > 1.0), "no water ran");
+}
+
+#[test]
+fn more_water_runs_through_the_hollows_than_over_the_crests() {
+    let columns = columns_asked(&[area()]);
+    let flow = flow_asked(&[area()]);
+
+    let deep = |x: i64| (8..REGION - 8).contains(&x.rem_euclid(REGION));
+    let (mut hollows, mut crests) = (Vec::new(), Vec::new());
+    for (&(x, y), &(ground, _)) in &columns {
+        let around: Vec<f32> = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            .iter()
+            .filter_map(|(dx, dy)| columns.get(&(x + dx, y + dy)).map(|&(g, _)| g))
+            .collect();
+        if !deep(x) || !deep(y) || around.len() < 4 {
+            continue;
+        }
+        let mean = around.iter().sum::<f32>() / 4.0;
+        if ground < mean - 0.1 {
+            hollows.push(flow[&(x, y)]);
+        } else if ground > mean + 0.1 {
+            crests.push(flow[&(x, y)]);
+        }
+    }
+    let average = |values: &[f32]| values.iter().sum::<f32>() / values.len() as f32;
+
+    assert!(
+        average(&hollows) > average(&crests),
+        "{} through the hollows on average, {} over the crests",
+        average(&hollows),
+        average(&crests)
+    );
+}
+
+#[test]
+fn a_sample_of_the_flow_is_what_its_chunk_holds() {
+    let flow = flow_asked(&[area()]);
+    let sampler = Runtime::new(Arc::new(pack(PACK).expect("a valid pack")), 6, SIZE);
+
+    for (&(x, y), &value) in &flow {
+        let sampled = sampler
+            .sample("flow", [x as f32 + 0.5, y as f32 + 0.5])
+            .expect("a sample");
+
+        assert_eq!(sampled.to_bits(), value.to_bits(), "column ({x}, {y})");
     }
 }

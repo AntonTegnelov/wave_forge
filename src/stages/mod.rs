@@ -26,12 +26,12 @@ mod world_run;
 pub use edits::{Edit, Edits, PointId};
 pub use facts::{Facts, GivenRow, MAX_SHARED, Row, RowId, Table, Value};
 pub use pack::{
-    AmbienceDef, AmbienceKind, Biome, Bound, Column, Condition, Door, Expr, Facing, Group, Level,
-    LocationKind, MAX_APPEARANCE, MAX_BLEND, MAX_CATEGORIES, MAX_CAVE_ROOMS, MAX_CHILDREN,
-    MAX_DEPOSITS, MAX_PIECES, MAX_SCATTER_SLOTS, MAX_SPAWN_BUDGET, MAX_TRIES, MAX_VARIANTS,
-    Materials, PACK_VERSION, Pack, PackError, PackFile, PackWater, ParamDef, Pattern, Persist,
-    Piece, Profile, Room, Rule, ScatterKind, SolveMask, Spawnable, StageDef, StageKind, TableDef,
-    TableKind, Water,
+    AmbienceDef, AmbienceKind, Biome, Bound, Column, Condition, Door, DropletsGive, Expr, Facing,
+    Group, Level, LocationKind, MAX_APPEARANCE, MAX_BLEND, MAX_CATEGORIES, MAX_CAVE_ROOMS,
+    MAX_CHILDREN, MAX_DEPOSITS, MAX_PIECES, MAX_SCATTER_SLOTS, MAX_SPAWN_BUDGET, MAX_TRIES,
+    MAX_VARIANTS, Materials, PACK_VERSION, Pack, PackError, PackFile, PackWater, ParamDef, Pattern,
+    Persist, Piece, Profile, Room, Rule, ScatterKind, SolveMask, Spawnable, StageDef, StageKind,
+    TableDef, TableKind, Water,
 };
 pub use runtime::{
     Categories, Field, FieldView, Judgement, PlaceName, Point, Product, Readings, Rejection,

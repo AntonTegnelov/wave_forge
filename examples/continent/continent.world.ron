@@ -109,6 +109,9 @@
         // descend to the sea, and fans where they leave the ranges. The near ground takes the
         // change, so its rivers and gullies follow the drainage.
         (name: "drained", scale: 4, kind: Droplets(height: "coarse_uplift", region: 64)),
+        // The same droplets' water, for the ground's wetness along the lines they drain by and the
+        // willows that follow them.
+        (name: "flow", scale: 4, kind: Droplets(height: "coarse_uplift", region: 64, gives: Flow)),
         (name: "coarse_eroded", scale: 4, kind: Erode(input: "drained", spacing: 40.0, octaves: 2, depth: 6.0, slope: 0.8, smooth: 1, name: Some("gullies"))),
         (name: "coarse_height", scale: 4, kind: Field(Add(
             Input("drained"),
@@ -127,6 +130,10 @@
             ),
             Mul(Max(Input("height"), Constant(0.0)), Constant(0.003)),
         ))),
+        // 0 to 1: how wet the ground is along the lines the continent drains by, from where about a
+        // tenth of its land's water runs over a column to where a hundredth does, for the ground
+        // shader's wetness channel and the willows.
+        (name: "wet", kind: Field(Clamp(Remap(Input("flow"), (60.0, 200.0), (0.0, 1.0)), 0.0, 1.0))),
         (name: "moisture", scale: 4, kind: Field(Clamp(Remap(Noise(frequency: 0.0025, octaves: 4, name: Some("moisture")), (0.3, 0.7), (0.0, 1.0)), 0.0, 1.0))),
         // Fifty biomes: the oceans and coasts by height, the peaks by height and temperature, and
         // below them five bands of temperature by four of moisture, in the lowlands and the
@@ -409,7 +416,7 @@
         (name: "spruces", kind: Scatter(kind: "spruce", height: "ground", spacing: 6, count: (1, 2), apart: 4, max_slope: Some(1.2), scale: (0.8, 1.3), tilt: (0.0, 4.0), avoid: Some(("settlements", 2)), block: [("boulders", 2.0)], when: [Greater(Is("biome", ["spruce_forest", "fir_highland", "taiga"]), Constant(0.5))])),
         (name: "firs", kind: Scatter(kind: "fir", height: "ground", spacing: 7, count: (1, 2), apart: 4, max_slope: Some(1.2), scale: (0.8, 1.3), tilt: (0.0, 4.0), avoid: Some(("settlements", 2)), block: [("boulders", 2.0)], when: [Greater(Is("biome", ["fir_highland", "alpine_meadow"]), Constant(0.5))])),
         (name: "larches", kind: Scatter(kind: "larch", height: "ground", spacing: 9, count: (1, 2), chance: 0.6, apart: 4, max_slope: Some(1.2), scale: (0.8, 1.3), tilt: (0.0, 4.0), avoid: Some(("settlements", 2)), block: [("boulders", 2.0)], when: [Greater(Is("biome", ["taiga", "cold_steppe", "lichen_highland"]), Constant(0.5))])),
-        (name: "willows", kind: Scatter(kind: "willow", height: "ground", spacing: 9, count: (1, 2), apart: 4, max_slope: Some(0.5), scale: (0.8, 1.3), tilt: (0.0, 4.0), avoid: Some(("settlements", 2)), block: [("boulders", 2.0)], when: [Greater(Is("biome", ["fen", "swamp", "muskeg", "upland_bog"]), Constant(0.5))])),
+        (name: "willows", kind: Scatter(kind: "willow", height: "ground", spacing: 9, count: (1, 2), apart: 4, max_slope: Some(0.5), scale: (0.8, 1.3), tilt: (0.0, 4.0), avoid: Some(("settlements", 2)), block: [("boulders", 2.0)], when: [Greater(Max(Is("biome", ["fen", "swamp", "muskeg", "upland_bog"]), Input("wet")), Constant(0.5))])),
         (name: "cypresses", kind: Scatter(kind: "cypress", height: "ground", spacing: 8, count: (1, 2), apart: 4, max_slope: Some(1.2), scale: (0.8, 1.3), tilt: (0.0, 4.0), avoid: Some(("settlements", 2)), block: [("boulders", 2.0)], when: [Greater(Is("biome", ["swamp", "mangrove", "highland_marsh"]), Constant(0.5))])),
         (name: "mangrove_trees", kind: Scatter(kind: "mangrove_tree", height: "ground", spacing: 5, count: (1, 2), apart: 3, max_slope: Some(1.2), scale: (0.8, 1.3), tilt: (0.0, 4.0), avoid: Some(("settlements", 2)), block: [("boulders", 2.0)], when: [Greater(Is("biome", ["mangrove"]), Constant(0.5))])),
         (name: "palms", kind: Scatter(kind: "palm", height: "ground", spacing: 9, count: (1, 2), chance: 0.6, apart: 4, max_slope: Some(1.2), scale: (0.8, 1.3), tilt: (0.0, 4.0), avoid: Some(("settlements", 2)), block: [("boulders", 2.0)], when: [Greater(Is("biome", ["beach", "rainforest"]), Constant(0.5))])),
