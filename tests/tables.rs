@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::{
-    Facts, GivenRow, Pack, PackError, RowId, Runtime, StageError, Table, Value,
+    AUTHORED, Facts, GivenRow, Pack, PackError, RowId, Runtime, StageError, Table, Value,
 };
 use wave_forge::{ChunkCoord, FocusPoint};
 
@@ -379,4 +379,120 @@ fn new_facts_that_leave_the_focused_row_as_it_was_drop_nothing_that_reads_it() {
     let dropped = runtime.set_facts(facts).expect("facts");
 
     assert_eq!(dropped, Vec::new());
+}
+
+/// The pack with two authored systems in sector 3 and one in sector 7, and bodies generated under
+/// every system, authored ones too.
+fn authored_pack() -> Arc<Pack> {
+    let text = PACK
+        .replace(
+            r#"                ("radius", Random(4.0, 40.0)),
+            ])),"#,
+            r#"                ("radius", Random(4.0, 40.0)),
+            ],
+            authored: [
+                (parent: [3], id: 0, values: [("mass", 1.0), ("order", 0.0), ("of", 0.0), ("radius", 1.0)]),
+                (parent: [3], id: 7, values: [("mass", 2.0), ("order", 0.0), ("of", 0.0), ("radius", 2.5)]),
+                (parent: [7], id: 0, values: [("mass", 3.0), ("order", 0.0), ("of", 0.0), ("radius", 9.0)]),
+            ])),
+        (name: "bodies", kind: Generated(parent: Some("systems"), count: Constant(2.0),
+            columns: [("size", Mul(Parent("radius"), Random(0.5, 1.5)))])),"#,
+        );
+    Arc::new(Pack::parse(&text).expect("a valid pack"))
+}
+
+#[test]
+fn authored_rows_take_their_place_without_moving_a_generated_row() {
+    let plain = Facts::new(pack(), 11).expect("facts");
+    let authored = Facts::new(authored_pack(), 11).expect("facts");
+
+    let (before, after) = (table(&plain, "systems"), table(&authored, "systems"));
+    let generated: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| row.id.0[1] < AUTHORED)
+        .cloned()
+        .collect();
+    assert_eq!(generated, before.rows, "every generated system as it was");
+    let added: Vec<(Vec<u64>, f32)> = after
+        .rows
+        .iter()
+        .filter(|row| row.id.0[1] >= AUTHORED)
+        .map(|row| (row.id.0.clone(), row.values[3]))
+        .collect();
+    assert_eq!(
+        added,
+        vec![
+            (vec![3, AUTHORED], 1.0),
+            (vec![3, AUTHORED + 7], 2.5),
+            (vec![7, AUTHORED], 9.0),
+        ]
+    );
+    assert!(
+        after.rows.windows(2).all(|pair| pair[0].id < pair[1].id),
+        "rows in the order of their ids"
+    );
+}
+
+#[test]
+fn an_authored_row_has_children_generated_as_any_row_does() {
+    let facts = Facts::new(authored_pack(), 11).expect("facts");
+
+    let bodies = table(&facts, "bodies");
+    let sol: Vec<&RowId> = bodies
+        .rows
+        .iter()
+        .map(|row| &row.id)
+        .filter(|id| id.0[..2] == [3, AUTHORED + 7])
+        .collect();
+
+    assert_eq!(
+        sol,
+        vec![
+            &RowId(vec![3, AUTHORED + 7, 0]),
+            &RowId(vec![3, AUTHORED + 7, 1])
+        ]
+    );
+}
+
+#[test]
+fn an_authored_row_is_checked_against_its_table() {
+    let with = |authored: &str| {
+        PACK.replace(
+            r#"                ("radius", Random(4.0, 40.0)),
+            ])),"#,
+            &format!(
+                r#"                ("radius", Random(4.0, 40.0)),
+            ], authored: [{authored}])),"#
+            ),
+        )
+    };
+    let missing = with(r#"(parent: [3], id: 0, values: [("mass", 1.0)])"#);
+    let unknown = with(
+        r#"(parent: [3], id: 0, values: [("mass", 1.0), ("order", 0.0), ("of", 0.0), ("radius", 1.0), ("age", 2.0)])"#,
+    );
+    let twice = with(
+        r#"(parent: [3], id: 0, values: [("mass", 1.0), ("order", 0.0), ("of", 0.0), ("radius", 1.0)]),
+           (parent: [3], id: 0, values: [("mass", 1.0), ("order", 0.0), ("of", 0.0), ("radius", 1.0)])"#,
+    );
+    let orphan = with(
+        r#"(parent: [99], id: 0, values: [("mass", 1.0), ("order", 0.0), ("of", 0.0), ("radius", 1.0)])"#,
+    );
+
+    for (text, what) in [
+        (missing, "a missing column"),
+        (unknown, "an unknown column"),
+        (twice, "one id twice"),
+    ] {
+        assert!(
+            matches!(Pack::parse(&text), Err(PackError::InvalidTable { .. })),
+            "{what}: {:?}",
+            Pack::parse(&text)
+        );
+    }
+    let pack = Arc::new(Pack::parse(&orphan).expect("its parent is known only once generated"));
+    assert!(matches!(
+        Facts::new(pack, 11),
+        Err(StageError::Table { .. })
+    ));
 }

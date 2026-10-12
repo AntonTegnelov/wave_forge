@@ -237,13 +237,31 @@ pub enum TableKind {
     /// ([`Expr::Parent`]), the row's own hash stream ([`Expr::Random`]), its place among its
     /// siblings ([`Expr::Index`], [`Expr::Count`]) and a share of a parent's budget
     /// ([`Expr::Share`]). A row's id is its parent's id and its index, so rows never shift when
-    /// other parents' children change.
+    /// other parents' children change. `authored` rows join the generated ones, each under its
+    /// parent with an id of its own, so adding one moves no generated row.
     Generated {
         #[serde(default)]
         parent: Option<String>,
         count: Expr,
         columns: Vec<(String, Expr)>,
+        #[serde(default)]
+        authored: Vec<AuthoredRow>,
     },
+}
+
+/// A row an author gives a generated table, a real star system from a catalogue say
+/// (docs/reference/packs.md, "Tables of facts"). Its id is its parent's id followed by
+/// [`crate::stages::AUTHORED`] plus its own number, which no generated row's id has, and it takes
+/// no part of its parent's budget.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct AuthoredRow {
+    /// The id of the row it belongs under; empty in a table without a parent.
+    #[serde(default)]
+    pub parent: Vec<u64>,
+    /// The author's own number for it, below [`crate::stages::AUTHORED`].
+    pub id: u64,
+    /// A value for every column of its table.
+    pub values: Vec<(String, f32)>,
 }
 
 /// What a given table's column holds. Every value is a number to the expressions that read it; a
@@ -1801,6 +1819,57 @@ enum Place<'a> {
 
 /// Whether every leaf `visit` reaches may be read at `place`, and every table column it names
 /// exists; `columns` holds each table's columns by table name.
+/// Why `authored`, rows given to a generated table of `columns`, with a parent table if
+/// `has_parent`, do not fit it, if they do not: each names every column once with a finite number,
+/// has a parent exactly when its table does, a number below [`crate::stages::AUTHORED`], and no
+/// two share a parent and a number.
+fn check_authored(
+    authored: &[AuthoredRow],
+    columns: &[String],
+    has_parent: bool,
+) -> Result<(), String> {
+    for (at, row) in authored.iter().enumerate() {
+        let name = format!("authored row {} under {:?}", row.id, row.parent);
+        let mut named: Vec<&str> = row
+            .values
+            .iter()
+            .map(|(column, _)| column.as_str())
+            .collect();
+        named.sort_unstable();
+        let mut expected: Vec<&str> = columns.iter().map(String::as_str).collect();
+        expected.sort_unstable();
+        if named != expected {
+            return Err(format!(
+                "{name} gives {named:?}, where the table has {expected:?}"
+            ));
+        }
+        if let Some((column, value)) = row.values.iter().find(|(_, value)| !value.is_finite()) {
+            return Err(format!("{name} gives {column:?} as {value}, not a number"));
+        }
+        if row.parent.is_empty() == has_parent {
+            return Err(format!(
+                "{name} {} a parent, where its table {}",
+                if row.parent.is_empty() {
+                    "has no"
+                } else {
+                    "names"
+                },
+                if has_parent { "has one" } else { "has none" }
+            ));
+        }
+        if row.id >= crate::stages::AUTHORED {
+            return Err(format!("{name}: its number is 2^63 or more"));
+        }
+        if authored[..at]
+            .iter()
+            .any(|other| other.parent == row.parent && other.id == row.id)
+        {
+            return Err(format!("{name} is given twice"));
+        }
+    }
+    Ok(())
+}
+
 fn check_place(
     visit: impl FnOnce(&mut dyn FnMut(&Expr)),
     place: Place<'_>,
@@ -2003,6 +2072,7 @@ fn link_tables(defs: Vec<TableDef>) -> Result<Linked, PackError> {
                 parent,
                 count,
                 columns,
+                authored,
             } => {
                 let (parent, parent_columns) = match parent {
                     None => (None, None),
@@ -2037,6 +2107,7 @@ fn link_tables(defs: Vec<TableDef>) -> Result<Linked, PackError> {
                     )
                     .map_err(in_column)?;
                 }
+                check_authored(authored, &names, parent.is_some()).map_err(invalid)?;
                 parent
             }
         };

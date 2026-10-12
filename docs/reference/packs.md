@@ -368,6 +368,24 @@ tables: [
 - **Ids.** A given row's `RowId` is the game's own id; a generated row's is its parent's id followed
   by its index, or its index alone without a parent. Adding a given row, or changing one parent's
   children, never changes another row's id or values.
+- **Authored rows.** A generated table may list rows an author gives it, a few real systems from a
+  catalogue among a galaxy's generated ones say, each with the id of the row it belongs under
+  (`parent`, empty in a table without one), a number of its own below `AUTHORED` (2^63) and a value
+  for every column:
+
+  ```ron
+  (name: "systems", kind: Generated(parent: Some("sectors"), count: Floor(Random(1.0, 12.0)),
+      columns: [("mass", Share("mass")), ("radius", Random(4.0, 40.0))],
+      authored: [(parent: [3], id: 0, values: [("mass", 1.0), ("radius", 1.0)])])),
+  ```
+
+  An authored row's id is its parent's id followed by `AUTHORED` plus its number, which no generated
+  row's index reaches, so adding or removing one moves no generated row, and it comes after its
+  parent's generated rows. It takes no part of its parent's budget, and the tables below generate
+  children from it as from any row. Loading refuses an authored row that does not name every column
+  once with a number, has a parent where its table has none or the other way round, a number of
+  2^63 or more, or the same parent and number as another; computing the tables refuses one whose
+  parent the parent table does not hold (`tests/tables.rs`).
 - A position is two number columns, and a stage that reads positions names them (TableSites'
   `at`). Curves in tables are not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)).
 
