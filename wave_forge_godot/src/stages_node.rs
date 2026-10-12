@@ -443,6 +443,8 @@ pub struct WaveForgeStages {
     far_due: std::collections::BTreeSet<ChunkCoord>,
     /// The texture sets `ground_texture_layers` names, while it names any.
     ground_textures: Option<GroundTextures>,
+    /// The plugin's own texture sets, once stacked.
+    plugin_sets: Option<GroundTextures>,
     /// The colour of each category of `far_ground_material_stage`, by index, from `ground_palette`.
     far_colours: Vec<Color>,
     /// The far categories' palette, ramps and reliefs, with a ground material stage.
@@ -890,6 +892,7 @@ impl INode for WaveForgeStages {
             ground_albedo_height: None,
             ground_normal_roughness: None,
             ground_textures: None,
+            plugin_sets: None,
             ground_cavity_stage: GString::new(),
             ground_wetness_stage: GString::new(),
             ground_cover_stage: GString::new(),
@@ -5335,7 +5338,7 @@ impl WaveForgeStages {
     }
 
     /// The texture sets `ground_texture_layers` names: those given, or the plugin's own.
-    fn load_ground_textures(&self) -> Result<GroundTextures, String> {
+    fn load_ground_textures(&mut self) -> Result<GroundTextures, String> {
         let (albedo_height, normal_roughness, means) =
             match (&self.ground_albedo_height, &self.ground_normal_roughness) {
                 (Some(albedo_height), Some(normal_roughness)) => {
@@ -5350,9 +5353,22 @@ impl WaveForgeStages {
                     (albedo_height.clone(), normal_roughness.clone(), means)
                 }
                 (None, None) => {
-                    let (albedo_height, means) = plugin_texture_sets("albedo_height")?;
-                    let (normal_roughness, _) = plugin_texture_sets("normal_roughness")?;
-                    (albedo_height, normal_roughness, means)
+                    // Stacked once a node: a preview starts again on every change in the editor.
+                    let sets = match &self.plugin_sets {
+                        Some(sets) => sets.clone(),
+                        None => {
+                            let (albedo_height, means) = plugin_texture_sets("albedo_height")?;
+                            let (normal_roughness, _) = plugin_texture_sets("normal_roughness")?;
+                            let sets = GroundTextures {
+                                albedo_height,
+                                normal_roughness,
+                                means,
+                            };
+                            self.plugin_sets = Some(sets.clone());
+                            sets
+                        }
+                    };
+                    (sets.albedo_height, sets.normal_roughness, sets.means)
                 }
                 _ => {
                     return Err(
@@ -6013,6 +6029,7 @@ fn far_group_of(chunk: ChunkCoord) -> ChunkCoord {
 }
 
 /// The texture sets the reference ground shader draws categories with.
+#[derive(Clone)]
 struct GroundTextures {
     albedo_height: Gd<Texture2DArray>,
     normal_roughness: Gd<Texture2DArray>,
