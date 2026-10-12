@@ -6,7 +6,9 @@
 ## materials blend smoothly across triangles and chunks and where grass grows. It lands in Godot's
 ## user directory, and the script prints where. Then, with vsync off, it times frames with the
 ## grass and without it, and prints both, with the viewport's GPU time for each: grass's cost on
-## this renderer, and without grass, what the ground shader costs.
+## this renderer, and without grass, what the ground shader costs. With `-- textured` it draws the
+## three with the plugin's sand, rock and grass texture sets instead, into `ground_textured.png`
+## and `grass_textured.png`, and times them the same way.
 extends SceneTree
 
 const CELLS := 8
@@ -25,6 +27,8 @@ var gpu_ms := 0.0
 var with_grass_gpu_ms := 0.0
 var timed_usec := 0
 var with_grass_ms := 0.0
+## What the pictures' names end in: empty, or `_textured` with the texture sets.
+var suffix := ""
 
 func _initialize() -> void:
 	world = ClassDB.instantiate("WaveForgeStages")
@@ -40,6 +44,9 @@ func _initialize() -> void:
 	world.ground_palette = PackedColorArray([Color(0.85, 0.78, 0.55), Color(0.52, 0.5, 0.48), Color(0.3, 0.55, 0.25)])
 	# Sand with a few small stones, rock in plates and cracks, grass in tufts.
 	world.ground_relief = PackedVector4Array([Vector4(0.15, 0, 0.35, 0.3), Vector4(0.25, 0.75, 0, 0.9), Vector4(0, 0, 1, 0.45)])
+	if "textured" in OS.get_cmdline_user_args():
+		world.ground_texture_layers = PackedInt32Array([3, 4, 0])
+		suffix = "_textured"
 	world.targets = PackedStringArray(["height", "surface", "cover", "hollow", "wet"])
 	world.ground_cavity_stage = "hollow"
 	world.ground_wetness_stage = "wet"
@@ -80,7 +87,7 @@ func _process(_delta: float) -> bool:
 			waited_frames += 1
 			if waited_frames < 10:
 				return false
-			var path := "user://ground.png"
+			var path := "user://ground%s.png" % suffix
 			root.get_viewport().get_texture().get_image().save_png(path)
 			print("render_ground: saved %s, %d chunks of ground, %d with grass" % [ProjectSettings.globalize_path(path), world.ground_chunks().size(), world.grass_chunks().size()])
 			phase = "close"
@@ -91,7 +98,7 @@ func _process(_delta: float) -> bool:
 			waited_frames += 1
 			if waited_frames < 10:
 				return false
-			var close := "user://grass.png"
+			var close := "user://grass%s.png" % suffix
 			root.get_viewport().get_texture().get_image().save_png(close)
 			print("render_ground: saved %s, grass close up" % ProjectSettings.globalize_path(close))
 			DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)

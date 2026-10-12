@@ -8,7 +8,10 @@
 ## wetness and cover stages' values at every vertex, and its ramps the ramp given for the first
 ## category, its far colour in linear light and its drivers, none for the others, and the ramps'
 ## heights; its reliefs the relief given for the first category and the default,
-## `wave_forge::GroundRelief::DEFAULT`, for the others. Grass grows on every chunk of ground within its
+## `wave_forge::GroundRelief::DEFAULT`, for the others. The second category is drawn with one of the
+## plugin's texture sets: each material holds its layer, its texture arrays of the plugin's eight
+## sets with mipmaps, and the set's mean colour, in linear light, as its palette colour; a layer past
+## the sets, or one of the two arrays without the other, is refused. Grass grows on every chunk of ground within its
 ## radius, each chunk's grass material holding the chunk's cover per column, the ground's height
 ## per vertex and the ground's materials and palette, and fading out before the edge of the square of chunks within the radius, measured
 ## from the followed chunk's centre, over which every chunk's ground takes the cover's tint in; the
@@ -27,6 +30,10 @@ const RAMP_HEIGHTS := Vector2(2.0, 9.0)
 ## The first category's relief, and the default the others take.
 const RELIEF := Vector4(0.25, 0.75, 0.0, 0.9)
 const DEFAULT_RELIEF := Vector4(0.0, 0.0, 0.6, 0.6)
+## The plugin's texture set the second category is drawn with, and how many sets the plugin has.
+const TEXTURED_LAYER := 2
+const TEXTURED_SET := "res://addons/wave_forge/ground_textures/2_gravel_albedo_height.res"
+const PLUGIN_SETS := 8
 
 var world: Node
 var ready := {}
@@ -35,6 +42,8 @@ var raising := false
 ## The first column of the chunk beside the origin, and its height before the raise.
 var raised := Vector2i(CELLS, 3)
 var before := 0.0
+## The mean colour of the texture set `TEXTURED_LAYER`, once worked out.
+var textured_mean: Variant = null
 
 func _initialize() -> void:
 	var wrong := _world("height")
@@ -48,6 +57,18 @@ func _initialize() -> void:
 		_fail("a cavity stage that is no field was taken")
 		return
 	wrong_cavity.queue_free()
+	var wrong_layer := _world("surface")
+	wrong_layer.ground_texture_layers = PackedInt32Array([PLUGIN_SETS])
+	if wrong_layer.start():
+		_fail("a texture layer past the plugin's sets was taken")
+		return
+	wrong_layer.queue_free()
+	var one_array := _world("surface")
+	one_array.ground_albedo_height = Texture2DArray.new()
+	if one_array.start():
+		_fail("texture sets without their normals were taken")
+		return
+	one_array.queue_free()
 	world = _world("surface")
 	world.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: ready[[stage, chunk]] = true)
 	if not world.start():
@@ -77,6 +98,7 @@ func _world(material_stage: String) -> Node:
 	node.ground_ramp_drivers = PackedVector4Array([RAMP_DRIVERS])
 	node.ground_ramp_heights = RAMP_HEIGHTS
 	node.ground_relief = PackedVector4Array([RELIEF])
+	node.ground_texture_layers = PackedInt32Array([-1, TEXTURED_LAYER])
 	node.grass_stage = "cover"
 	node.grass_radius = 1
 	root.add_child(node)
@@ -155,6 +177,10 @@ func _check() -> bool:
 				or not Vector4(second_relief.r, second_relief.g, second_relief.b, second_relief.a).is_equal_approx(DEFAULT_RELIEF):
 			_fail("the reliefs of %s are %s texels of format %d, the first %s, the second %s" % [chunk, reliefs.get_size(), reliefs.get_format(), first_relief, second_relief])
 			return true
+		var wrong_textures := _wrong_textures(material)
+		if not wrong_textures.is_empty():
+			_fail("the ground of %s %s" % [chunk, wrong_textures])
+			return true
 	if seen.size() < 2:
 		_fail("only %d materials on the ground" % seen.size())
 		return true
@@ -174,8 +200,37 @@ func _check() -> bool:
 					_fail("the ground at %s is %f high, off its triangles' diagonal %f" % [middle, world.ground_height(middle), diagonal])
 					return true
 	print("verify_ground: the ground's height stands on its mesh at every column centre and on every square's diagonal")
-	print("verify_ground: %d chunks of ground, each with the categories and channels of its %d vertices, the ramps and the reliefs, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
+	print("verify_ground: %d chunks of ground, each with the categories and channels of its %d vertices, the ramps, the reliefs and the texture sets, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
 	return false
+
+## Why `material` does not draw the second category with the plugin's texture set `TEXTURED_LAYER`
+## and the first in its colour; empty if it does.
+func _wrong_textures(material: ShaderMaterial) -> String:
+	var layers: Image = material.get_shader_parameter("wave_forge_texture_layers").get_image()
+	var first := roundi(layers.get_pixel(0, 0).r * 255.0)
+	var second := roundi(layers.get_pixel(1, 0).r * 255.0)
+	if first != 0 or second != TEXTURED_LAYER + 1:
+		return "holds texture layers %d and %d, not none and %d" % [first, second, TEXTURED_LAYER + 1]
+	for name in ["wave_forge_albedo_height", "wave_forge_normal_roughness"]:
+		var sets: Texture2DArray = material.get_shader_parameter(name)
+		if sets == null or sets.get_layers() != PLUGIN_SETS or not sets.has_mipmaps():
+			return "has %s of %s" % [name, "no sets" if sets == null else "%d sets, mipmaps %s" % [sets.get_layers(), sets.has_mipmaps()]]
+	if textured_mean == null:
+		# Headless, the texture array keeps no data: the set's own file does.
+		var image: Image = load(TEXTURED_SET).get_image()
+		image.decompress()
+		var sum := Vector3()
+		for y in image.get_height():
+			for x in image.get_width():
+				var texel := image.get_pixel(x, y).srgb_to_linear()
+				sum += Vector3(texel.r, texel.g, texel.b)
+		sum /= image.get_width() * image.get_height()
+		textured_mean = Color(sum.x, sum.y, sum.z).linear_to_srgb()
+	var mean: Color = textured_mean
+	var held: Color = material.get_shader_parameter("wave_forge_palette").get_image().get_pixel(1, 0)
+	if maxf(maxf(absf(held.r - mean.r), absf(held.g - mean.g)), absf(held.b - mean.b)) > 1.0 / 255.0:
+		return "gives its textured category the colour %s, not its set's mean %s" % [held, mean]
+	return ""
 
 ## Whether `material` fades the grass over `fade` chunks from `focus`, with chunks `span` wide.
 func _fades(material: ShaderMaterial, fade: Vector2, span: Vector2, focus: Vector2) -> bool:

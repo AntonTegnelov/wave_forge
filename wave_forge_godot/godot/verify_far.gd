@@ -10,7 +10,9 @@
 ## near ground drawn by a ground material, each group of `GROUP` by `GROUP` far chunks is drawn with
 ## a copy of it of its own, holding the category of every vertex of their grids of coarse columns
 ## side by side, a coarse column's width as its cell and its first vertex at a fine cell's centre,
-## and the far categories' palette. A far
+## and the far categories' palette. The near surface's second category is drawn with a texture set,
+## which the far ground draws in the colour the near ground's palette gives it, its set's mean, and
+## without textures. A far
 ## ground material stage at another scale than the far ground's, or one generated nearer than the
 ## far ground, is warned of and refused.
 extends SceneTree
@@ -24,6 +26,8 @@ const PALETTE := [Color(0.3, 0.6, 0.2), Color(0.6, 0.55, 0.5)]
 ## How many coarse chunks along each side one far mesh and material draw (`FAR_GROUP` in
 ## stages_node.rs).
 const GROUP := 4
+## The plugin's texture set the near surface's second category is drawn with.
+const TEXTURED_LAYER := 4
 
 var world: Node
 var started_usec := 0
@@ -68,6 +72,7 @@ func _initialize() -> void:
 	world.far_ground_stage = "far"
 	world.ground_material_stage = "surface"
 	world.ground_palette = PackedColorArray(PALETTE)
+	world.ground_texture_layers = PackedInt32Array([-1, TEXTURED_LAYER])
 	world.far_ground_material_stage = "far_surface"
 	root.add_child(world)
 	if not world.start():
@@ -110,9 +115,19 @@ func _process(_delta: float) -> bool:
 	quit(0)
 	return true
 
+## The colour the near ground's material gives the near category `near`: its palette colour, or for
+## the textured one its set's mean.
+func _near_colour(near: int) -> Color:
+	var material: ShaderMaterial = world.ground_material_of(world.ground_chunks()[0])
+	return material.get_shader_parameter("wave_forge_palette").get_image().get_pixel(near, 0)
+
+## Whether `a` and `b` are the same colour to a byte a channel, as the palette holds them.
+func _same(a: Color, b: Color) -> bool:
+	return maxf(maxf(absf(a.r - b.r), absf(a.g - b.g)), absf(a.b - b.b)) <= 1.0 / 255.0
+
 ## Why a vertex of the far ground of `chunk` is not in the colour of its column's far surface; empty
-## if every one is. A far category the near surface names takes that category's palette colour;
-## one it does not takes a colour that is in no palette.
+## if every one is. A far category the near surface names takes that category's colour in the near
+## ground; one it does not takes a colour that is in no palette.
 func _wrong_colour(chunk: Vector3i) -> String:
 	var surface: Dictionary = world.far_ground_surface(chunk)
 	var positions: PackedVector3Array = surface["positions"]
@@ -127,15 +142,16 @@ func _wrong_colour(chunk: Vector3i) -> String:
 		var column := Vector2i(clampi(floori(positions[i].x / column_size.x), 0, CELLS - 1), clampi(floori(positions[i].z / column_size.z), 0, CELLS - 1))
 		var name := far_names[categories[column.y * CELLS + column.x]]
 		var near := near_names.find(name)
-		if near >= 0 and not colours[i].is_equal_approx(PALETTE[near]):
-			return "a far vertex of %s over %s is %s, not %s's %s" % [chunk, name, colours[i], name, PALETTE[near]]
+		if near >= 0 and not _same(colours[i], _near_colour(near)):
+			return "a far vertex of %s over %s is %s, not %s's %s" % [chunk, name, colours[i], name, _near_colour(near)]
 		if near < 0 and PALETTE.any(func(colour: Color) -> bool: return colours[i].is_equal_approx(colour)):
 			return "a far vertex of %s over %s, which the near surface does not name, is a palette colour" % [chunk, name]
 	return ""
 
 ## Why the far ground of `chunk` is not drawn with its group's copy of the ground material holding
 ## the category of every vertex of its grid where the chunk lies in the group's, a coarse column
-## apart from the centre of the first fine cell, in the far categories' palette; empty if it is.
+## apart from the centre of the first fine cell, in the far categories' palette and without texture
+## sets; empty if it is.
 func _wrong_material(chunk: Vector3i) -> String:
 	var material: ShaderMaterial = world.far_ground_material_of(chunk)
 	if material == null:
@@ -168,10 +184,10 @@ func _wrong_material(chunk: Vector3i) -> String:
 		if near < 0:
 			continue
 		var held := palette.get_pixel(index, 0)
-		var colour: Color = PALETTE[near]
-		# The palette holds a byte a channel.
-		if maxf(maxf(absf(held.r - colour.r), absf(held.g - colour.g)), absf(held.b - colour.b)) > 1.0 / 255.0:
-			return "the far palette of %s gives %s %s, not %s" % [chunk, far_names[index], held, colour]
+		if not _same(held, _near_colour(near)):
+			return "the far palette of %s gives %s %s, not %s" % [chunk, far_names[index], held, _near_colour(near)]
+	if material.get_shader_parameter("wave_forge_texture_layers") != null:
+		return "the far material of %s draws texture sets" % chunk
 	return ""
 
 ## Whether every chunk of the WFC lattice the coarse `chunk` covers has near ground.
