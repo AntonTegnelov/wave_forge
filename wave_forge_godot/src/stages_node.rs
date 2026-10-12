@@ -488,6 +488,8 @@ pub struct WaveForgeStages {
     palette: Option<(Gd<ImageTexture>, Gd<ShaderMaterial>)>,
     /// What the node's slowest frame since the start spent Godot's thread on.
     slowest_frame: FrameCost,
+    /// The most any frame has spent keeping navigation regions, in milliseconds.
+    slowest_navigation_ms: f64,
     /// How long the node's last frame took on Godot's thread, in milliseconds.
     last_frame_ms: f64,
     /// Signals not yet emitted, in the order their events arrived.
@@ -953,6 +955,7 @@ impl INode for WaveForgeStages {
             promotion_radius: -1,
             placements: Placements::default(),
             slowest_frame: FrameCost::default(),
+            slowest_navigation_ms: 0.0,
             pending: VecDeque::new(),
         }
     }
@@ -1256,6 +1259,7 @@ impl INode for WaveForgeStages {
             self.signals().navigation_ready().emit(to_vector(chunk));
         }
         frame.navigation_ms = elapsed_ms(navigating);
+        self.slowest_navigation_ms = self.slowest_navigation_ms.max(frame.navigation_ms);
         self.update_occluders(&towns);
         self.update_grass();
         self.update_audio(&near_changed);
@@ -3185,7 +3189,8 @@ impl WaveForgeStages {
     /// `slowest_frame_signals_ms` (the handlers connected to them included),
     /// `slowest_frame_grounds` chunks given ground in `slowest_frame_grounds_ms`, and
     /// `slowest_frame_bodies` chunks given a body in `slowest_frame_bodies_ms`, and
-    /// `slowest_frame_navigation_ms` keeping navigation regions. And `stages`: what
+    /// `slowest_frame_navigation_ms` keeping navigation regions; and `slowest_navigation_ms`, the
+    /// most any frame has spent keeping them. And `stages`: what
     /// each stage has cost on the stages' thread, by name, as `products`, `ms` in all and
     /// `slowest_ms` for one product. And `pending_signals`, `pending_grounds` and
     /// `pending_colliders`: the signals, grounds and bodies waiting for a later frame. And
@@ -3266,6 +3271,7 @@ impl WaveForgeStages {
             ("slowest_frame_bodies_ms", slowest.bodies_ms),
             ("slowest_frame_navigation_ms", slowest.navigation_ms),
             ("slowest_frame_placements_ms", slowest.placements_ms),
+            ("slowest_navigation_ms", self.slowest_navigation_ms),
         ] {
             out.set(&key.to_variant(), &value.to_variant());
         }
