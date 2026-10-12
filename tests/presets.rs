@@ -510,6 +510,42 @@ fn every_value_in_the_canyon_ranges_gives_a_sound_world() {
 }
 
 #[test]
+fn dry_washes_run_across_the_canyons_floors_where_the_desert_drains() {
+    // A square of 24 by 24 chunks around the origin, 192 cells a side.
+    let pack = preset("canyon");
+    let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+    let chunks: Vec<ChunkCoord> = (-12..12)
+        .flat_map(|y| (-12..12).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime.request(&focus, &["surface"]).expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let names = pack.kind("surface").expect("a surface stage").categories();
+    let index = |name: &str| names.iter().position(|&n| n == name).expect(name) as u8;
+    let (wash, sand) = (index("wash"), index("sand"));
+
+    let (mut washes, mut floor) = (0, 0);
+    for &chunk in &chunks {
+        for &category in &runtime
+            .categories("surface", chunk)
+            .expect("generated")
+            .values
+        {
+            washes += usize::from(category == wash);
+            floor += usize::from(category == wash || category == sand);
+        }
+    }
+
+    let share = washes as f32 / floor.max(1) as f32;
+    println!("{share} of the canyons' floors in washes");
+    // Lines through the floors, not sheets over them.
+    assert!(
+        (0.01..0.2).contains(&share),
+        "{share} of the floors in washes"
+    );
+}
+
+#[test]
 fn wider_canyons_more_strata_and_more_cacti_each_make_more_of_theirs() {
     let pack = preset("canyon");
     let survey_at = |canyons: f32, strata: f32, cacti: f32| {

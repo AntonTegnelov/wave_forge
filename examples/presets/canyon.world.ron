@@ -52,6 +52,10 @@
         (name: "height", kind: Field(Max(Input("rock"), Input("weathered")))),
         (name: "debris", kind: Field(Max(Sub(Input("weathered"), Input("rock")), Constant(0.0)))),
         (name: "steep", kind: Delta(input: "height", radius: 1)),
+        // The water that drains the desert on the rare days it rains, from droplets rolling down the
+        // far ground's shape at 4 cells a column (docs/reference/packs.md, "Droplets"): where much
+        // of it runs over a canyon's floor, a dry wash of gravel.
+        (name: "flow", scale: 4, kind: Droplets(height: "far_height", region: 16, gives: Flow)),
         (name: "surface", kind: Rules(rules: [
             // Bands of paler rock a cell or so thick, as strata are, through the cliffs and the rock.
             (category: "pale_cliff", when: [
@@ -61,6 +65,7 @@
             (category: "cliff", when: [Greater(Input("steep"), Constant(1.6))]),
             // Aprons of debris at the cliffs' feet, broken rock lighter than the walls above.
             (category: "scree", when: [Greater(Input("debris"), Constant(0.4))]),
+            (category: "wash", when: [Less(Input("plateau"), Constant(0.1)), Greater(Input("flow"), Constant(60.0))]),
             (category: "sand", when: [Less(Input("plateau"), Constant(0.1))]),
             (category: "pale_rock", when: [Greater(Sin(Mul(Input("height"), Constant(2.0))), Constant(0.35))]),
         ], otherwise: "red_rock")),
