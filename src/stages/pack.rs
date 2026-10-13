@@ -526,6 +526,15 @@ pub enum StageKind {
     /// comes row by row. An area does not reach across a region's border, so a finite world labels
     /// its whole map as one region.
     Connected { input: String, region: u32 },
+    /// `open`'s columns above `above` with passages dug between them (docs/reference/packs.md,
+    /// "Passages"): 1 at every open column and 0 elsewhere. In every square region of `region`
+    /// chunks, passages one column wide join every open column to every other and to a crossing on
+    /// each of the region's edges, which the neighbour across the edge digs to too.
+    Passages {
+        open: String,
+        above: f32,
+        region: u32,
+    },
     /// The categories of a map a game paints (docs/reference/packs.md, "Painted"): each column takes
     /// the category its pixel's colour stands for in `legend`, from the painting named `painting`
     /// the game gives the runtime ([`crate::stages::Runtime::give_painting`]). Pixel (x, y) covers
@@ -1253,7 +1262,8 @@ impl StageKind {
             Self::Lakes { region, .. }
             | Self::Droplets { region, .. }
             | Self::Talus { region, .. }
-            | Self::Connected { region, .. } => Some(*region),
+            | Self::Connected { region, .. }
+            | Self::Passages { region, .. } => Some(*region),
             _ => None,
         }
     }
@@ -1270,7 +1280,8 @@ impl StageKind {
             | Self::Lakes { .. }
             | Self::Droplets { .. }
             | Self::Talus { .. }
-            | Self::Connected { .. } => Output::Field,
+            | Self::Connected { .. }
+            | Self::Passages { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } | Self::Aquifer { .. } => Output::Volume,
             Self::Top { .. } => Output::Field,
             Self::Rules { .. }
@@ -2755,6 +2766,19 @@ impl Pack {
                     // The areas are labelled over the whole region, from its categories alone.
                     vec![(input.as_str(), Reach::region(*region), Output::Categories)]
                 }
+                StageKind::Passages {
+                    open,
+                    above,
+                    region,
+                } => {
+                    if *region == 0 || !above.is_finite() {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks, open above {above}"
+                        )));
+                    }
+                    // The passages are dug over the whole region, from its open columns alone.
+                    vec![(open.as_str(), Reach::region(*region), Output::Field)]
+                }
                 StageKind::Locations {
                     height,
                     region,
@@ -3624,6 +3648,7 @@ impl Pack {
                 | StageKind::Droplets { .. }
                 | StageKind::Talus { .. }
                 | StageKind::Connected { .. }
+                | StageKind::Passages { .. }
                 | StageKind::Painted { .. }
                 | StageKind::Carve { .. }
                 | StageKind::Top { .. }
@@ -3817,6 +3842,7 @@ impl Pack {
                 | StageKind::Droplets { region, .. }
                 | StageKind::Talus { region, .. }
                 | StageKind::Connected { region, .. }
+                | StageKind::Passages { region, .. }
                 | StageKind::Locations { region, .. }
                 | StageKind::Region { region, .. }
                 | StageKind::Rivers { region, .. }

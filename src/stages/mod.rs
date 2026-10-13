@@ -15,6 +15,7 @@ pub mod facts;
 mod lakes;
 mod network;
 pub mod pack;
+mod passages;
 pub mod regions;
 mod rivers;
 pub mod runtime;

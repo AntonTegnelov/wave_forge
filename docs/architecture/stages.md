@@ -92,7 +92,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | Kind | What it does | Reach | Serves | Today |
 |---|---|---|---|---|
 | **Field** | a fused pointwise expression graph: noise, splines, remap, math, first-match classifiers, image lookup | 0 | G1, G3, G6, G7, N2, N7 | value noise with named streams, coordinates and distances, arithmetic, clamps, smoothsteps, remaps, curves, selects, a blended match per category, and Godot's FastNoiseLite noises in 2D, exact against Godot |
-| **Filter** | stencils, blur, cellular automata, slope, distance transforms | declared per pass | G2, G5, G7 | `Blur`, `Delta` (terrain delta), `Horizon` (horizon-angle occlusion), `Area` (biome area) and `Flatten`; slope, cellular automata and distance transforms are not built yet |
+| **Filter** | stencils, blur, cellular automata, slope, distance transforms | declared per pass | G2, G5, G7 | `Blur`, `Delta` (terrain delta), `Horizon` (horizon-angle occlusion), `Area` (biome area), `Flatten`, `Connected` (labelled areas) and `Passages` (open areas joined, across regions too); slope, cellular automata and distance transforms are not built yet |
 | **Rules** | first-match rule trees producing a Prior or a categorical field, like Minecraft's surface rules | that of its conditions | G1, G7, N4 | a categorical field; a Prior is not built yet |
 | **Solve** | WFC over a Prior; Wang tiling later | the solver's halo | G4, G5, N6 | one bounded town per site (below) |
 | **Sites** | owned region-scale points, one candidate per region cell (Minecraft's `random_spread`), with spacing | a region | G1, G3, G7 | one footprint per region, sites from a table's rows, and a location table of kinds with priorities, quotas, distances and conditions per region |

@@ -21,7 +21,8 @@ use super::pack::{
     Column, DropletsGive, Expr, LocationKind, MAX_APPEARANCE, MAX_CATEGORIES, MAX_SCATTER_SLOTS,
     Output, Pack, Persist, Profile, Reach, Rule, Stage, StageKind, TableKind, point_stage_id, salt,
 };
-use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
+use super::passages::passages;
+use super::regions::{Attempt, Curve, CurveId, Edge, RegionInput, RegionJob, edge_hash, region_of};
 use super::rivers::DownhillRivers;
 use super::save::{FrozenChunk, Save};
 use super::talus::{Talus, slump};
@@ -2497,7 +2498,8 @@ impl Runtime {
             StageKind::Lakes { .. }
             | StageKind::Droplets { .. }
             | StageKind::Talus { .. }
-            | StageKind::Connected { .. } => {
+            | StageKind::Connected { .. }
+            | StageKind::Passages { .. } => {
                 let size = stage.kind.field_region().expect("a region field stage");
                 let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
                 let side = [i64::from(size) * sx, i64::from(size) * sy];
@@ -2825,7 +2827,8 @@ impl Runtime {
             StageKind::Lakes { height, .. }
             | StageKind::Droplets { height, .. }
             | StageKind::Talus { height, .. }
-            | StageKind::Connected { input: height, .. },
+            | StageKind::Connected { input: height, .. }
+            | StageKind::Passages { open: height, .. },
         ) = (stage.kind.field_region(), &stage.kind)
         else {
             return Ok(());
@@ -2931,10 +2934,58 @@ impl Runtime {
                     .collect::<Vec<u8>>(),
                 columns,
             ),
+            StageKind::Passages { above, .. } => {
+                passages(heights, columns, above, &self.crossings(index, region))
+            }
             _ => unreachable!(
-                "only Lakes, Droplets, Talus and Connected stages compute a region's field"
+                "only Lakes, Droplets, Talus, Connected and Passages stages compute a region's field"
             ),
         }
+    }
+
+    /// The columns of `region` where Passages stage `index` crosses its edges, by their index in
+    /// the region row by row: one on each edge, where the edge's hash puts it, which the region
+    /// across the edge computes too. An edge whose neighbour lies wholly outside the world's bound
+    /// has none, since no passage leads out of the world.
+    fn crossings(&self, index: usize, region: (i32, i32)) -> Vec<usize> {
+        // Which value of an edge's hash a Passages stage's crossing takes.
+        const CROSSING: u32 = 0x7061_7373;
+        let stage = &self.pack.stages[index];
+        let size = stage.kind.field_region().expect("a region field stage");
+        let [width, depth] = [
+            (size * self.size[0]) as usize,
+            (size * self.size[1]) as usize,
+        ];
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        let cells = [
+            width as f32 * stage.scale as f32,
+            depth as f32 * stage.scale as f32,
+        ];
+        let inside = |(x, y): (i32, i32)| {
+            self.pack.bound().is_none_or(|bound| {
+                let min = [x as f32 * cells[0], y as f32 * cells[1]];
+                bound.meets(min, [min[0] + cells[0], min[1] + cells[1]])
+            })
+        };
+        let (x, y) = region;
+        [
+            (Edge::West, (x - 1, y)),
+            (Edge::East, (x + 1, y)),
+            (Edge::South, (x, y - 1)),
+            (Edge::North, (x, y + 1)),
+        ]
+        .into_iter()
+        .filter(|&(_, neighbour)| inside(neighbour))
+        .map(|(edge, _)| {
+            let hash = edge_hash(world, stage.salt, region, edge, CROSSING) as usize;
+            match edge {
+                Edge::West => hash % depth * width,
+                Edge::East => hash % depth * width + width - 1,
+                Edge::South => hash % width,
+                Edge::North => (depth - 1) * width + hash % width,
+            }
+        })
+        .collect()
     }
 
     /// The field of stage `index`, computed a region at a time, over `region`, for sampling: the
@@ -2964,7 +3015,8 @@ impl Runtime {
             StageKind::Lakes { height, .. }
             | StageKind::Droplets { height, .. }
             | StageKind::Talus { height, .. }
-            | StageKind::Connected { input: height, .. },
+            | StageKind::Connected { input: height, .. }
+            | StageKind::Passages { open: height, .. },
         ) = (stage.kind.field_region(), &stage.kind)
         else {
             unreachable!("only region field stages are sampled a region at a time")
@@ -3754,7 +3806,8 @@ impl Runtime {
             StageKind::Lakes { region, .. }
             | StageKind::Droplets { region, .. }
             | StageKind::Talus { region, .. }
-            | StageKind::Connected { region, .. } => self.region_fields.contains_key(&key(*region)),
+            | StageKind::Connected { region, .. }
+            | StageKind::Passages { region, .. } => self.region_fields.contains_key(&key(*region)),
             StageKind::Locations { region, .. } => self.placed.contains_key(&key(*region)),
             StageKind::Region { region, .. }
             | StageKind::Rivers { region, .. }
@@ -4403,7 +4456,8 @@ impl Runtime {
                     | StageKind::Lakes { .. }
                     | StageKind::Droplets { .. }
                     | StageKind::Talus { .. }
-                    | StageKind::Connected { .. } => {
+                    | StageKind::Connected { .. }
+                    | StageKind::Passages { .. } => {
                         unreachable!("handled above")
                     }
                 };
