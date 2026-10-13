@@ -230,7 +230,9 @@ connects every open area, then populations from weighted XML tables and hand-mad
 
 **Needs.** Import (maps and templates), Region jobs per zone, Filter (segmentation, connectivity),
 Solve inside masks, Scatter from tables, per-stage persistence. **Status:** started (2026-10-13): an
-authored map imports through a [Painted](../reference/packs.md#painted) stage; templates do not yet.
+authored map imports through a [Painted](../reference/packs.md#painted) stage, and a
+[Passages](../reference/packs.md#passages) stage makes every open cell of a zone reachable, its paths
+lining up with the neighbouring zones'; templates and segments do not yet.
 
 ### G6. An Elite Dangerous-like galaxy of systems and planets
 

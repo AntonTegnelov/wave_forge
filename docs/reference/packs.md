@@ -426,6 +426,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Nearest` | Categories | what its climate reads, 0 cells |
 | `Painted` | Categories | a painting the game gives |
+| `Passages` | Field | a field, over its region |
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
 | `Horizon` | Field | one field, `reach` cells |
@@ -1276,6 +1277,25 @@ world names its connected regions of each biome, its seas, deserts and ranges sa
 reads an id as any field's value, exact as a float up to 2^24 areas. Loading refuses a region of 0
 chunks and an input that gives no categories (`tests/connected.rs`).
 
+### Passages
+
+`Passages(open: "caves", above: 0.6, region: 4)`: `open`'s columns above `above`, with passages dug
+through the closed columns between them so that every open column reaches every other, edge to
+edge: 1 at an open column, its own or dug, and 0 elsewhere. This is the pass that makes a cave, a
+dungeon level or a zone of rooms walkable everywhere. In every square region of `region` chunks,
+each open column is joined to the region's first open column, row by row, by the route through the
+fewest closed columns, and those are dug, so a passage runs through the caves it meets on the way.
+Each edge of the region also has a crossing, a column that is open whatever `open` holds there: its
+place along the edge comes from a hash of the edge, which the region across it computes too, so the
+two crossings face each other and the passages of neighbouring regions meet. A whole world of
+regions is one network, with a way from every zone into each of its neighbours. An edge whose neighbouring region lies wholly outside the [world bound](#world-bound) has no
+crossing, so a finite world placed as one region digs no passage to its rim.
+
+A passage is one column wide and the field depends on `open` alone, so chunks generate in any order
+and the stage can be sampled. A Rules stage reads it with `Greater(Input("open"), Constant(0.5))`.
+Loading refuses a region of 0 chunks, an `above` that is not finite, and an input that is no field
+(`tests/passages.rs`).
+
 ### Network
 
 `Network(sites: "towns", height: "ground", region: 12, width: 1.5, climb: 4.0, dry: Some(0.05))`:
@@ -1342,7 +1362,7 @@ let trees = runtime.points("trees", chunk);
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
   its values over an area of its own columns, row by row with x fastest, without generating any
   chunk: exactly what the chunks would hold. Field, Rules, Nearest, Painted, Blur, Delta, Horizon, Erode and Area stages whose
-  inputs are too can be sampled, and so can Lakes, Droplets, Talus and Connected stages, each computed once over the
+  inputs are too can be sampled, and so can Lakes, Droplets, Talus, Connected and Passages stages, each computed once over the
   whole region a sample lies in from samples of its input, the latest eight kept for later
   samples; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
   takes `&self` and holds no products, so a game can build a runtime just to sample, on any thread:

@@ -168,20 +168,32 @@ impl RegionInput<'_> {
     /// between them without reading each other.
     #[must_use]
     pub fn edge_hash(&self, edge: Edge, purpose: u32) -> u32 {
-        let (x, y) = self.region;
-        // An edge is named by the region on its lower side and its axis, from either side.
-        let (low, axis) = match edge {
-            Edge::West => ((x - 1, y), 0),
-            Edge::East => ((x, y), 0),
-            Edge::South => ((x, y - 1), 1),
-            Edge::North => ((x, y), 1),
-        };
-        pcg3d([
-            self.world ^ self.salt ^ 0x6564_6765,
-            (low.0 as u32) ^ purpose.wrapping_mul(0x9E37_79B9),
-            (low.1 as u32) ^ (axis + 1),
-        ])[0]
+        edge_hash(self.world, self.salt, self.region, edge, purpose)
     }
+}
+
+/// A hash of `edge` of `region` and `purpose`, for a stage of `salt` in a world of `world`, the
+/// same from the region on either side of the edge.
+pub(crate) fn edge_hash(
+    world: u32,
+    salt: u32,
+    region: (i32, i32),
+    edge: Edge,
+    purpose: u32,
+) -> u32 {
+    let (x, y) = region;
+    // An edge is named by the region on its lower side and its axis, from either side.
+    let (low, axis) = match edge {
+        Edge::West => ((x - 1, y), 0),
+        Edge::East => ((x, y), 0),
+        Edge::South => ((x, y - 1), 1),
+        Edge::North => ((x, y), 1),
+    };
+    pcg3d([
+        world ^ salt ^ 0x6564_6765,
+        (low.0 as u32) ^ purpose.wrapping_mul(0x9E37_79B9),
+        (low.1 as u32) ^ (axis + 1),
+    ])[0]
 }
 
 /// The region of a Region stage with regions of `size` chunks that `chunk` lies in.
