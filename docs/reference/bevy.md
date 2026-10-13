@@ -78,7 +78,9 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
   `failure()`. `set_facts(facts)` and `focus(table,
   id)` hand the stages new tables of facts and a focused row ([packs.md](packs.md#tables-of-facts)):
   a game keeps its own `Facts`, gives it rows, and hands a copy here; the runtime `build` makes is
-  given its first facts and focus there. A location's `Site::name()` is a translation key with
+  given its first facts and focus there. `give_painting(name, painting)` gives the Painted stages
+  that read `name` a map the game paints ([packs.md](packs.md#painted)), which `build` can give its
+  runtime first too. A location's `Site::name()` is a translation key with
   arguments ([packs.md](packs.md#locations)), for a game's localisation, a Fluent bundle say
   ([Sound and names](#sound-and-names)). The
   pack's water is the game's own `Pack::water()` ([packs.md](packs.md#water)). A frozen stage's

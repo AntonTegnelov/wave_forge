@@ -51,9 +51,9 @@ use wave_forge::noise::{
 use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, Judgement, MAX_CATEGORIES, Pack, ParamDef, Point,
-    PointId, Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId, StageError, StageEvent,
-    StageKind, StageTiming, StageWorker, TableKind, Value,
+    Column, Edit, Edits, Facts, GivenRow, Judgement, MAX_CATEGORIES, Pack, Painting, ParamDef,
+    Point, PointId, Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId, StageError,
+    StageEvent, StageKind, StageTiming, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -167,7 +167,7 @@ pub struct WaveForgeStages {
     /// The material the ground is drawn with; none draws it with Godot's default.
     #[export]
     ground_material: Option<Gd<Material>>,
-    /// A Rules, Area or Nearest stage at the ground's scale whose categories are the ground's
+    /// A Rules, Nearest, Painted or Area stage at the ground's scale whose categories are the ground's
     /// materials; empty for none. Each chunk's ground then gets its own copy of `ground_material`,
     /// which has to
     /// be a `ShaderMaterial` taking `wave_forge_materials`, `wave_forge_cell` and
@@ -1948,6 +1948,42 @@ impl WaveForgeStages {
         }
         worker.set_facts(next.clone());
         self.facts = Some(next);
+        true
+    }
+
+    /// Gives the Painted stages that read painting `name` its pixels, a map the game paints say,
+    /// laid on the ground as the top view shows it: the image's x along +x and its rows along +z.
+    /// Its colours have to be the ones painted, so a VRAM-compressed import is refused; mipmaps
+    /// are not read. The stages that read the painting are generated again, with `stage_dropped`
+    /// and `stage_ready` for their chunks. Returns whether it was taken; why not, a colour a legend
+    /// does not name say, is reported as an error, and nothing changes.
+    #[func]
+    fn give_painting(&mut self, name: GString, image: Gd<Image>) -> bool {
+        let (Some(sampler), Some(worker)) = (&mut self.sampler, &self.worker) else {
+            godot_error!("wave forge: give_painting before start");
+            return false;
+        };
+        if image.is_compressed() {
+            godot_error!(
+                "wave forge: painting {name:?} is compressed, which changes its colours; import \
+                 it lossless"
+            );
+            return false;
+        }
+        let mut rgba = Image::new_gd();
+        rgba.copy_from(&image);
+        rgba.clear_mipmaps();
+        rgba.convert(ImageFormat::RGBA8);
+        let painting = Painting {
+            width: u32::try_from(rgba.get_width()).expect("an image's width is positive"),
+            height: u32::try_from(rgba.get_height()).expect("an image's height is positive"),
+            pixels: rgba.get_data().as_slice().as_chunks::<4>().0.to_vec(),
+        };
+        if let Err(error) = sampler.give_painting(&name.to_string(), painting.clone()) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        worker.give_painting(&name.to_string(), painting);
         true
     }
 
@@ -5196,13 +5232,14 @@ impl WaveForgeStages {
             (
                 "ground_material_stage",
                 &self.ground_material_stage,
-                "Rules, Area or Nearest ",
+                "Rules, Nearest, Painted or Area ",
                 &|_, kind| {
                     matches!(
                         kind,
                         StageKind::Rules { .. }
-                            | StageKind::Area { .. }
                             | StageKind::Nearest { .. }
+                            | StageKind::Painted { .. }
+                            | StageKind::Area { .. }
                     )
                 },
             ),

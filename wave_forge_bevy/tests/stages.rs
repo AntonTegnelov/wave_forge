@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use wave_forge::stages::{
-    Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, Stamp, Value,
+    Edit, Edits, Facts, GivenRow, Pack, Painting, PointId, RowId, Runtime, Save, Stamp, Value,
 };
 use wave_forge::towns::{Town, TownError, TownRequest, TownSolver};
 use wave_forge::{
@@ -884,6 +884,71 @@ fn new_facts_drop_the_stages_that_read_them_and_regenerate_them() {
     for (low, high) in before.iter().zip(after) {
         assert!((high - low - 50.0).abs() < 1e-3, "{low} then {high}");
     }
+}
+
+const PAINTED: &str = r#"(
+    version: 1,
+    stages: [(name: "biome", kind: Painted(painting: "map", origin: (-64.0, -64.0), cell: 128.0,
+        legend: [((0, 128, 0), "forest"), ((0, 0, 255), "sea")], otherwise: "sea"))],
+)"#;
+
+/// A painting of one pixel of `colour`, covering the chunks around the origin.
+fn one_pixel(colour: [u8; 4]) -> Painting {
+    Painting {
+        width: 1,
+        height: 1,
+        pixels: vec![colour],
+    }
+}
+
+#[test]
+fn a_new_painting_drops_the_stages_that_read_it_and_regenerates_them() {
+    let pack = Arc::new(Pack::parse(PAINTED).expect("a valid pack"));
+    let names = pack.kind("biome").expect("a stage").categories();
+    let sea = names.iter().position(|name| *name == "sea").expect("sea") as u8;
+    let mut app = app_with(WaveForgeStagesPlugin::new(
+        &["biome"],
+        SETTINGS,
+        move || {
+            let mut runtime = Runtime::new(Arc::clone(&pack), 4, SETTINGS.chunk);
+            runtime
+                .give_painting("map", one_pixel([0, 128, 0, 255]))
+                .map_err(|error| error.to_string())?;
+            Ok(runtime)
+        },
+    ));
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .categories("biome", origin)
+            .is_some()
+    });
+    let before = app
+        .world()
+        .resource::<WaveForgeStages>()
+        .categories("biome", origin)
+        .expect("arrived")
+        .values
+        .clone();
+
+    app.world()
+        .resource::<WaveForgeStages>()
+        .give_painting("map", one_pixel([0, 0, 255, 255]));
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .categories("biome", origin)
+            .is_some_and(|categories| categories.values.iter().all(|&c| c == sea))
+    });
+
+    assert!(before.iter().all(|&c| c != sea), "{before:?}");
+    assert!(
+        app.world()
+            .resource::<Seen>()
+            .dropped
+            .contains(&("biome".to_owned(), origin))
+    );
 }
 
 #[test]

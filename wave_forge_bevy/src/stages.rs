@@ -45,7 +45,7 @@ use wave_forge::noise::NoiseConfig;
 use wave_forge::stages::AmbienceDef;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
-    Categories, Edits, Facts, Field, Pack, Point, RowId, Runtime, Save, Site, StageEvent,
+    Categories, Edits, Facts, Field, Pack, Painting, Point, RowId, Runtime, Save, Site, StageEvent,
     StageTiming, StageWorker, Stamp, TownChunk, Volume,
 };
 use wave_forge::{
@@ -538,6 +538,16 @@ impl WaveForgeStages {
     /// [`set_facts`]: WaveForgeStages::set_facts
     pub fn focus(&self, table: &str, id: RowId) {
         self.worker.focus(table, id);
+    }
+
+    /// Gives the Painted stages that read painting `name` its pixels, as
+    /// [`wave_forge::stages::Runtime::give_painting`] says, with what that makes stale arriving as
+    /// [`set_facts`] says. A painting a legend refuses stops generation and arrives as
+    /// [`StagesFailed`].
+    ///
+    /// [`set_facts`]: WaveForgeStages::set_facts
+    pub fn give_painting(&self, name: &str, painting: Painting) {
+        self.worker.give_painting(name, painting);
     }
 }
 

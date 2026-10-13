@@ -1,0 +1,8 @@
+// The pack of the painting check (verify_painted.gd): a map the game paints, one pixel per chunk.
+(
+    version: 1,
+    stages: [
+        (name: "biome", kind: Painted(painting: "map", origin: (0.0, 0.0), cell: 8.0,
+            legend: [((0, 128, 0), "forest"), ((0, 0, 255), "sea")], otherwise: "sea")),
+    ],
+)
