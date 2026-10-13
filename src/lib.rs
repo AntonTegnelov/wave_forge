@@ -102,7 +102,7 @@ pub use wfc_core::{
 };
 #[cfg(feature = "wgpu")]
 pub use wfc_gpu::{BlockSolver, Compilation, SolverConfig, wgpu_backend::WgpuBackend};
-pub use wfc_rules::{AdjacencyRules, LoadError, TileSet, import, loader, modules};
+pub use wfc_rules::{AdjacencyRules, LoadError, TileSet, import, loader, modules, template};
 
 use std::sync::Arc;
 use thiserror::Error as ErrorDerive;

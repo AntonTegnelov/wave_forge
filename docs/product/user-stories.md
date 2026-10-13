@@ -232,7 +232,10 @@ connects every open area, then populations from weighted XML tables and hand-mad
 Solve inside masks, Scatter from tables, per-stage persistence. **Status:** started (2026-10-13): an
 authored map imports through a [Painted](../reference/packs.md#painted) stage, and a
 [Passages](../reference/packs.md#passages) stage makes every open cell of a zone reachable, its paths
-lining up with the neighbouring zones'; templates and segments do not yet.
+lining up with the neighbouring zones'. A template image teaches a module set of its patterns
+([constraints.md](../architecture/constraints.md#what-adjacency-can-express)); where a zone's segments
+are solved with them is the owner's decision
+([#440](https://github.com/AntonTegnelov/wave_forge/issues/440)).
 
 ### G6. An Elite Dangerous-like galaxy of systems and planets
 

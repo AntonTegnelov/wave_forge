@@ -52,6 +52,12 @@ extension needs none of godot-rust's thread-safety features.
   `name_module_set(library, cell_size, names, walkable)` writes the set with the connectors `names`
   maps under their new names and walkable sides on the connectors `walkable` lists; a naming that
   would lose or merge connectors is refused with an error and an empty result.
+  `WaveForgeWorld.learn_module_set(template, n, wrap)`, a static function, learns a module set from
+  an `Image`'s patterns of `n` by `n` pixels, as WFC's overlapping model does
+  ([constraints.md](../architecture/constraints.md#what-adjacency-can-express)), as text for
+  `load_rules`: each module carries its first pixel's colour as a tag, `value <n>`, `n` the colour
+  as the RGBA32 integer `Color.hex` reads. Mipmaps are not read; a VRAM-compressed image, a pattern
+  larger than the image and more than 256 patterns are refused with an error and an empty result.
   `mesh_library_from_scenes(directory)` makes a `MeshLibrary` of a kit that comes as a folder of
   scenes: an item per `.tscn`, `.scn`, `.glb` or `.gltf` file, named as the file, whose mesh is
   every `MeshInstance3D` of the scene merged where the scene places them, and whose shapes are the

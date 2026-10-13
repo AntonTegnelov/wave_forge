@@ -40,6 +40,20 @@ lists the connectors found, and `propose_named` writes the set under the artist'
 naming that would lose or merge connectors (N6). The city's own voxel stand-ins,
 imported this way, generate a city (`wfc-devtools/tests/import.rs`).
 
+A template picture can teach a module set too, as WFC's overlapping model learns its patterns from
+a sample ([Gumin's WaveFunctionCollapse](https://github.com/mxgmn/WaveFunctionCollapse)):
+`wfc_rules::template::learn` makes a module of every distinct `n` by `n` window of the template,
+weighted by how often it occurs, and named `pattern <i>` in the order the windows are first met, row
+by row. A module's `+x` side carries a connector named for its window's last `n - 1` columns and its
+`-x` side one named for its first, and likewise along y, so two modules fit exactly where their
+windows agree on what they share, and the overlapping model needs no solver of its own. A module
+stands for its window's lowest corner, which it carries as a tag, `value <n>`; since neighbours
+agree, every `n` by `n` window of a solved plane is one of the template's. Modules keep their
+orientation and stack freely, so the set describes a plane one layer deep. Windows can wrap across
+the template's edges, for a template that tiles; a set may hold at most 256 patterns, a cell's mask
+(`wfc-devtools/tests/template.rs`). Where a game solves such a set, inside the segments of a zone
+say, is still open ([#440](https://github.com/AntonTegnelov/wave_forge/issues/440)).
+
 Two further tools sit next to the rules:
 
 - **Weights** shape *how much* of each thing appears, not what is legal. Note they apply per rotated

@@ -10,7 +10,8 @@
 ## that loads as a rule set, refuses one name for two connectors, and offers no walkable tick for
 ## a top. The same kit as a folder of scenes, the wall placed under a parent node, proposes the
 ## same modules and the panel lists the same four connectors from the folder; its scenes' static
-## bodies come with it as the items' shapes, where the scenes place them. Last, a world generated from
+## bodies come with it as the items' shapes, where the scenes place them. A template image learns a
+## module set of its patterns, as WFC's overlapping model does. Last, a world generated from
 ## the folder's module set with those shapes as its colliders (`set_collision_shapes`) has a body
 ## under every walkable cell: a ray dropped onto the top of every block with open air above meets it.
 extends SceneTree
@@ -72,6 +73,11 @@ func _initialize() -> void:
 		_fail(problem)
 		return
 	print("verify_import: the same kit as a folder of scenes proposes the same modules, and the panel lists its four connectors, its scenes' bodies the items' shapes")
+	problem = _template()
+	if not problem.is_empty():
+		_fail(problem)
+		return
+	print("verify_import: a template image learns a module set of its patterns, each module tagged with its colour, that loads as a rule set; a pattern larger than the image is refused")
 	city = ClassDB.instantiate("WaveForgeWorld")
 	if not city.load_rules(scene_proposal):
 		_fail("the folder's proposal does not load as a rule set")
@@ -234,6 +240,34 @@ func _through(panel: VBoxContainer, library: MeshLibrary) -> String:
 	panel.rows["side 1"][0].text = "brick"
 	if panel.save_to("user://clash.ron"):
 		return "one name for two connectors was saved"
+	return ""
+
+## A template of stripes, two pixels of red then two of white along x, learnt in windows of 2 by 2
+## that wrap: its four distinct windows become four modules, each tagged with its first pixel's
+## colour, and the set loads as a rule set. Empty if all holds, or else what does not.
+func _template() -> String:
+	var red := Color8(200, 30, 30)
+	var image := Image.create_empty(4, 2, false, Image.FORMAT_RGB8)
+	for y in 2:
+		for x in 4:
+			image.set_pixel(x, y, red if x < 2 else Color.WHITE)
+	image.generate_mipmaps()
+
+	var learnt: String = ClassDB.class_call_static("WaveForgeWorld", "learn_module_set", image, 2, true)
+	var refused: String = ClassDB.class_call_static("WaveForgeWorld", "learn_module_set", image, 3, false)
+
+	if not learnt.contains('"pattern 3"') or learnt.contains('"pattern 4"'):
+		return "the stripes did not learn four patterns:\n%s" % learnt
+	for colour in [red, Color.WHITE]:
+		if not learnt.contains('"value %d"' % colour.to_rgba32()):
+			return "no module carries %s as its value:\n%s" % [colour, learnt]
+	var world: Node = ClassDB.instantiate("WaveForgeWorld")
+	var loads: bool = world.load_rules(learnt)
+	world.free()
+	if not loads:
+		return "the learnt set does not load as a rule set:\n%s" % learnt
+	if not refused.is_empty():
+		return "a pattern taller than the image was learnt:\n%s" % refused
 	return ""
 
 func _fail(message: String) -> void:

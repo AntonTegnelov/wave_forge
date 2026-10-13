@@ -47,9 +47,10 @@
 //! `xy`, and Godot's `y` is the lattice's `z`. `cell_size` says how large one cell is along each of
 //! Godot's axes, which is what turns a position into a chunk.
 
+use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::{
-    AudioStream, Engine, FileAccess, INode, MeshLibrary, NavigationMesh,
+    AudioStream, Engine, FileAccess, INode, Image, MeshLibrary, NavigationMesh,
     NavigationMeshSourceGeometryData3D, NavigationServer3D, Node, PhysicsServer3D, Shape3D,
 };
 use godot::prelude::*;
@@ -586,6 +587,52 @@ impl WaveForgeWorld {
     fn propose_module_set(library: Gd<MeshLibrary>, cell_size: Vector3) -> GString {
         let items = kit::items(&library, cell_size);
         GString::from(wave_forge::import::propose(&kit::modules(&items), kit::TOLERANCE).as_str())
+    }
+
+    /// A module set learnt from `template`'s patterns of `n` by `n` pixels, as WFC's overlapping
+    /// model learns them, as text for `load_rules`: a module per distinct window of the image,
+    /// weighted by how often it occurs, whose sides fit where two windows agree on what they
+    /// share. With `wrap`, windows run across the image's edges, for a template that tiles. Each
+    /// module stands for its window's first pixel, whose colour it carries as a tag, `value <n>`,
+    /// `n` the colour as an RGBA32 integer that `Color.hex` reads. Mipmaps are not read. An image
+    /// that cannot be learnt, a VRAM-compressed one or one of more than 256 patterns say, is
+    /// reported as an error and gives an empty string.
+    #[func]
+    fn learn_module_set(template: Gd<Image>, n: i64, wrap: bool) -> GString {
+        if template.is_compressed() {
+            godot_error!(
+                "wave forge: a compressed template, which changes its colours; import it lossless"
+            );
+            return GString::new();
+        }
+        let mut rgba = Image::new_gd();
+        rgba.copy_from(&template);
+        rgba.clear_mipmaps();
+        rgba.convert(ImageFormat::RGBA8);
+        let cells: Vec<u32> = rgba
+            .get_data()
+            .as_slice()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&pixel| u32::from_be_bytes(pixel))
+            .collect();
+        let template = wave_forge::template::Template {
+            width: usize::try_from(rgba.get_width()).expect("an image's width is positive"),
+            height: usize::try_from(rgba.get_height()).expect("an image's height is positive"),
+            cells: &cells,
+        };
+        let Ok(n) = usize::try_from(n) else {
+            godot_error!("wave forge: a pattern of {n} pixels");
+            return GString::new();
+        };
+        match wave_forge::template::learn(template, n, wrap) {
+            Ok(text) => GString::from(text.as_str()),
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                GString::new()
+            }
+        }
     }
 
     /// The connectors `propose_module_set` finds in `library`'s meshes, for an artist to rename and
