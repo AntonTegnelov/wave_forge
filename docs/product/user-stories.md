@@ -205,7 +205,8 @@ order and the reroll are known from community reverse engineering (unverified fr
 - The simulation of materials stays the engine's; the world is handed over as data.
 
 **Needs.** Import (images), Region jobs with retries, Solve with Wang tiles, Apply (stamps), Scatter
-from markers. **Status:** not started (2026-09-23).
+from markers. **Status:** started (2026-10-13): a painted biome map imports through a
+[Painted](../reference/packs.md#painted) stage; painted tiles, markers and pixel scenes do not yet.
 
 ### G5. A Caves of Qud-like world of zones
 
@@ -228,7 +229,8 @@ connects every open area, then populations from weighted XML tables and hand-mad
   on first emit.
 
 **Needs.** Import (maps and templates), Region jobs per zone, Filter (segmentation, connectivity),
-Solve inside masks, Scatter from tables, per-stage persistence. **Status:** not started (2026-09-23).
+Solve inside masks, Scatter from tables, per-stage persistence. **Status:** started (2026-10-13): an
+authored map imports through a [Painted](../reference/packs.md#painted) stage; templates do not yet.
 
 ### G6. An Elite Dangerous-like galaxy of systems and planets
 

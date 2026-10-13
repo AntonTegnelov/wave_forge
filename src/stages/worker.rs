@@ -10,8 +10,8 @@ use super::facts::{Facts, RowId};
 use super::pack::Pack;
 use super::regions::Curve;
 use super::runtime::{
-    Categories, Field, Judgement, Point, Product, Runtime, Site, StageTiming, Stamp, TownChunk,
-    Volume,
+    Categories, Field, Judgement, Painting, Point, Product, Runtime, Site, StageTiming, Stamp,
+    TownChunk, Volume,
 };
 use super::save::Save;
 use crate::ChunkCoord;
@@ -43,6 +43,10 @@ enum Order {
     Focus {
         table: String,
         id: RowId,
+    },
+    Painting {
+        name: String,
+        painting: Painting,
     },
     Params(BTreeMap<String, f32>),
     ScatterReport {
@@ -220,6 +224,16 @@ impl StageWorker {
         let _ = self.orders.send(Order::Focus {
             table: table.to_owned(),
             id,
+        });
+    }
+
+    /// Gives the Painted stages that read painting `name` its pixels, as
+    /// [`Runtime::give_painting`] does, with what that makes stale arriving as drops. An error
+    /// stops the thread and arrives as a failure.
+    pub fn give_painting(&self, name: &str, painting: Painting) {
+        let _ = self.orders.send(Order::Painting {
+            name: name.to_owned(),
+            painting,
         });
     }
 
@@ -476,6 +490,7 @@ fn play(
             | Order::Edits(_)
             | Order::Params(_)
             | Order::Focus { .. }
+            | Order::Painting { .. }
             | Order::Save
             | Order::Load(_)
             | Order::ScatterReport { .. } => {
@@ -624,6 +639,7 @@ where
                 }
                 Order::Load(save) => runtime.load(&save),
                 Order::Focus { table, id } => runtime.focus(&table, id),
+                Order::Painting { name, painting } => runtime.give_painting(&name, painting),
                 Order::Params(values) => runtime.set_params(&values),
                 Order::ScatterReport { stage, chunk } => {
                     // A chunk dropped since it was asked for has no inputs left to decide from.

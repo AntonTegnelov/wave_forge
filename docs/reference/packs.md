@@ -425,6 +425,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Aquifer` | Volume | a volume, and what its materials read, 0 cells |
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Nearest` | Categories | what its climate reads, 0 cells |
+| `Painted` | Categories | a painting the game gives |
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
 | `Horizon` | Field | one field, `reach` cells |
@@ -678,6 +679,26 @@ near biomes the first listed. This is how Minecraft's multi-noise biome source p
 climate noises. Each point has one value per climate expression, and the biomes' names, each listed
 once, are the stage's categories in their order, which a field reads through `Is` as it reads a
 Rules stage's. A Nearest stage can be sampled without chunks.
+
+### Painted
+
+`Painted(painting: "map", origin: (0.0, 0.0), cell: 8.0, legend: [((40, 120, 40), "forest"), ((30,
+60, 200), "sea")], otherwise: "sea")`: a category per column from a map the game paints, a biome map
+say. The game decodes the picture itself and gives it to the runtime by name,
+`runtime.give_painting("map", Painting { width, height, pixels })`, the pixels RGBA row by row as
+image files hold them; the library reads no file. Pixel (x, y) covers the columns from `origin` plus
+x and y times `cell`, in WFC cells, so the picture lies on the ground as an engine's top view shows
+it, its rows along +y; a column takes the category the legend gives its pixel's colour, and a column
+beyond the picture takes `otherwise`. Alpha is not read. The stage's categories are the legend's
+names, each once in the order they first appear, then `otherwise`'s; several colours may name one
+category, and a field reads them through `Is` as it reads a Rules stage's. A Painted stage can be
+sampled without chunks.
+
+Giving a painting drops what read the one before and returns it as `request` does. It refuses
+pixels that do not fill the picture and a colour a reading stage's legend does not name, naming the
+pixel, and keeps the painting it had; generating a Painted stage whose painting was never given
+fails with `StageError::NoPainting`. Loading refuses a cell that is not above 0 and a colour listed
+twice (`tests/painted.rs`).
 
 ### Blur
 
@@ -1245,8 +1266,8 @@ ground's colour and a Scatter stage's rules can read:
 
 ### Connected
 
-`Connected(input: "biome", region: 16)`: the connected areas of a Rules, Nearest or Area stage's
-categories, as a field of ids. In every square region of `region` chunks, two columns that share an
+`Connected(input: "biome", region: 16)`: the connected areas of a Rules, Nearest, Area or Painted
+stage's categories, as a field of ids. In every square region of `region` chunks, two columns that share an
 edge and a category belong to one area, and every column takes its area's id: 0 for the area of the
 region's first column, row by row with x fastest, then 1 for the next area met, and so on. So the
 ids depend on the categories alone, chunks generate in any order, and the stage can be sampled. An
@@ -1320,7 +1341,7 @@ let trees = runtime.points("trees", chunk);
   between; `is_idle` says whether anything is left.
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
   its values over an area of its own columns, row by row with x fastest, without generating any
-  chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta, Horizon, Erode and Area stages whose
+  chunk: exactly what the chunks would hold. Field, Rules, Nearest, Painted, Blur, Delta, Horizon, Erode and Area stages whose
   inputs are too can be sampled, and so can Lakes, Droplets, Talus and Connected stages, each computed once over the
   whole region a sample lies in from samples of its input, the latest eight kept for later
   samples; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
@@ -1380,7 +1401,7 @@ the four column centres around it. A field holds one height per column centre, s
 column's value, is what a game stands a player or an object on.
 
 `wave_forge::ground_materials(chunk, categories)` gives the category of every vertex of the same
-grid from a Rules, Area or Nearest stage at the height field's scale, the vertices along the +x and +y edges
+grid from a Rules, Nearest, Painted or Area stage at the height field's scale, the vertices along the +x and +y edges
 taking the neighbours' first columns as their heights do: the materials an engine's ground shader
 tells apart. It returns `None` until the categories of the chunk and of the chunks beyond its +x
 edge, its +y edge and its +x+y corner have arrived.

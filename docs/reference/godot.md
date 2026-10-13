@@ -189,7 +189,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off. In the editor the plugin follows the editor's camera instead |
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
 | | `ground_material` | the material the ground is drawn with |
-| | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
+| | `ground_material_stage` | a Rules, Nearest, Painted or Area stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | | `ground_ramp_colours`, `ground_ramp_drivers`, `ground_ramp_heights` | a ramp per category, by index as `ground_palette`, along which the reference ground shader moves the category's colour: the colour it runs toward, and a `Vector4` of how far the ground's height (0 to 1 over `ground_ramp_heights`, in world units), its slope (0 flat to 1 sheer), its cavity and its wetness each move it, from -1 to 1, summed and clamped to the ramp. A category past either array's end has none. Handed to the shader as `wave_forge_ramps` and `ramp_heights` |
 | | `ground_relief` | a micro-height per category, by index as `ground_palette`: a `Vector4` of how much of it is pebbles, cracks and tufts, and how wide one feature is in world units (`wave_forge::GroundRelief`); a category past its end has fine tufts. The reference ground shader bumps the ground near the camera by it and lets the material standing higher win where materials meet. Handed to the shader as `wave_forge_relief` |
@@ -296,7 +296,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   the top of the ground over a cave, NaN until the surfaces within a cell of it are built.
 - `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
-  Field, Rules, Nearest, Blur, Delta, Horizon, Erode, Area, Lakes, Droplets, Talus and Connected
+  Field, Rules, Nearest, Painted, Blur, Delta, Horizon, Erode, Area, Lakes, Droplets, Talus and Connected
   stages (a Lakes, Droplets, Talus or Connected stage computed once over the region a position lies
   in). An error, and NaN or an empty array, for
   another stage.
@@ -312,6 +312,12 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   a stage that reads a row with none focused stops generation. A refused give or focus is reported
   as an error, returns false and changes nothing; the stages that read a changed table are
   generated again, with `stage_dropped` and `stage_ready` for their chunks.
+- `give_painting(name, image)` gives the Painted stages that read `name` a map the game paints, an
+  `Image` in any uncompressed format ([packs.md](packs.md#painted)), laid on the ground as the top
+  view shows it: the image's x along +x and its rows along +z. Mipmaps are not read, and a
+  VRAM-compressed import is refused, since compression changes the colours the legend names. Give it
+  after `start` and before `follow`, as a table; a refused painting is reported as an error, returns
+  false and changes nothing.
 - `curves(stage, chunk)`: a Region or TableCurves stage's curves through a chunk, each with what
   names it (its `region` and `index`, or its `row`), `points` on the ground plane in Godot's world
   space, and `values`.
@@ -782,7 +788,7 @@ of the height named `around`. Without either, the texture is black and changes n
 refuses a channel stage that is no field.
 `ground_shader_code()` gives its code, to start a game's own shader from; a game's
 `ground_material` has to be a `ShaderMaterial` taking the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading refuses a
-`ground_material_stage` that is no Rules, Area or Nearest stage, and a `ground_material` that is no
+`ground_material_stage` that is no Rules, Nearest, Painted or Area stage, and a `ground_material` that is no
 `ShaderMaterial` beside it.
 
 ### Navigation
@@ -873,7 +879,8 @@ brighter and warmer or darker and cooler, as far as `variation` (0.15), and take
 
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
 colliders and navigation), `godot/verify_stages.gd` (the valley pack, its ground, and a walk
-through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) and
+through a town), `godot/verify_tables.gd` (tables of facts given from GDScript),
+`godot/verify_painted.gd` (a painted map given from GDScript) and
 `godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack), `godot/verify_edits.gd`
 (a felled tree and raised ground through an edits log and a save, and cut grass growing back) and
 `godot/verify_assemble.gd` (a village's pieces placed by their transforms) and

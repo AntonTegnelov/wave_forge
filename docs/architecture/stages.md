@@ -103,7 +103,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | a Region stage running a `RegionJob` the game registers, producing curves, and the built-in Rivers stage |
 | **Table** | rows given by the game, or generated once per parent row by expressions | its parent table | G2, G3, G6 | built; stages read a focused row, a TableSites stage puts a site for every row, and a Solve stage chooses its rule set by a row's names; Apply reading a table's curves is [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Emit** | products for an engine | 0 | N1, N3, P1 | done by the engine integrations today |
-| **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 | the edits log is applied to every product as it is generated, not as a stage; imports are not built yet |
+| **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4, G5 | the edits log is applied to every product as it is generated, not as a stage; a painted map is imported as categories by a `Painted` stage, from pixels the game decodes and gives; imported heightmaps are not built yet |
 
 ### Placement rules are Scatter stages
 

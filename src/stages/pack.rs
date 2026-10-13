@@ -526,6 +526,18 @@ pub enum StageKind {
     /// comes row by row. An area does not reach across a region's border, so a finite world labels
     /// its whole map as one region.
     Connected { input: String, region: u32 },
+    /// The categories of a map a game paints (docs/reference/packs.md, "Painted"): each column takes
+    /// the category its pixel's colour stands for in `legend`, from the painting named `painting`
+    /// the game gives the runtime ([`crate::stages::Runtime::give_painting`]). Pixel (x, y) covers
+    /// `cell` cells a side from `origin` plus x and y times `cell`; a column beyond the picture takes
+    /// `otherwise`.
+    Painted {
+        painting: String,
+        origin: (f32, f32),
+        cell: f32,
+        legend: Vec<([u8; 3], String)>,
+        otherwise: String,
+    },
     /// A location table: sites of several kinds, placed once per square region of `region` chunks,
     /// the kinds in order of their `priority`, highest first. Each kind tries `tries` hashed
     /// footprints of `size` chunks a side in the region, one chunk in from its edge, and keeps one
@@ -1176,8 +1188,8 @@ pub(crate) enum Output {
 }
 
 impl StageKind {
-    /// The categories a Rules or Area stage names, or a Volume stage's materials, in the order of
-    /// their indices; none for other kinds.
+    /// The categories a Rules, Nearest, Painted or Area stage names, or a Volume stage's materials,
+    /// in the order of their indices; none for other kinds.
     #[must_use]
     pub fn categories(&self) -> Vec<&str> {
         let (rules, otherwise) = match self {
@@ -1191,6 +1203,21 @@ impl StageKind {
                 ..
             } => (rules, otherwise),
             Self::Area { .. } => return vec!["median", "edge"],
+            Self::Painted {
+                legend, otherwise, ..
+            } => {
+                let mut names: Vec<&str> = Vec::new();
+                for name in legend
+                    .iter()
+                    .map(|(_, name)| name.as_str())
+                    .chain([otherwise.as_str()])
+                {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+                return names;
+            }
             Self::Nearest { biomes, .. } => {
                 return biomes.iter().map(|biome| biome.category.as_str()).collect();
             }
@@ -1246,7 +1273,10 @@ impl StageKind {
             | Self::Connected { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } | Self::Aquifer { .. } => Output::Volume,
             Self::Top { .. } => Output::Field,
-            Self::Rules { .. } | Self::Area { .. } | Self::Nearest { .. } => Output::Categories,
+            Self::Rules { .. }
+            | Self::Area { .. }
+            | Self::Nearest { .. }
+            | Self::Painted { .. } => Output::Categories,
             Self::Region { .. }
             | Self::Rivers { .. }
             | Self::Network { .. }
@@ -2597,6 +2627,28 @@ impl Pack {
                     }
                     vec![(input.as_str(), Reach::Cells(*distance), Output::Categories)]
                 }
+                StageKind::Painted {
+                    origin,
+                    cell,
+                    legend,
+                    ..
+                } => {
+                    if !(*cell > 0.0 && cell.is_finite())
+                        || !(origin.0.is_finite() && origin.1.is_finite())
+                    {
+                        return Err(invalid(format!("pixels of {cell} cells from {origin:?}")));
+                    }
+                    if let Some((colour, _)) = legend
+                        .iter()
+                        .enumerate()
+                        .find(|(at, (colour, _))| legend[..*at].iter().any(|(c, _)| c == colour))
+                        .map(|(_, entry)| entry)
+                    {
+                        return Err(invalid(format!("the legend gives colour {colour:?} twice")));
+                    }
+                    // It reads the game's painting, no stage.
+                    Vec::new()
+                }
                 StageKind::Sites {
                     height,
                     region,
@@ -3572,6 +3624,7 @@ impl Pack {
                 | StageKind::Droplets { .. }
                 | StageKind::Talus { .. }
                 | StageKind::Connected { .. }
+                | StageKind::Painted { .. }
                 | StageKind::Carve { .. }
                 | StageKind::Top { .. }
                 | StageKind::Aquifer { .. }
