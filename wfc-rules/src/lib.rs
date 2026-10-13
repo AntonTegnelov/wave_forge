@@ -10,6 +10,7 @@ pub mod import;
 /// Contains the main rule loading functions.
 pub mod loader;
 pub mod modules;
+pub mod template;
 /// Contains the core types (`TileId`, `TileSet`, `AdjacencyRules`).
 pub mod types;
 
