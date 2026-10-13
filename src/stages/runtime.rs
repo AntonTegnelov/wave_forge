@@ -513,6 +513,10 @@ pub enum StageError {
     NoFocus(String),
     #[error("the runtime was given no facts, which a stage or a focus reads")]
     NoFacts,
+    #[error("a Painted stage reads painting {0:?}, which the runtime was not given")]
+    NoPainting(String),
+    #[error("painting {painting:?}: {message}")]
+    Painting { painting: String, message: String },
     #[error("a parameter: {0}")]
     Param(String),
     #[error("the facts were made for another pack or seed than the runtime's")]
@@ -614,6 +618,16 @@ impl FieldView<'_> {
 /// A Region stage's index and one of its regions.
 type RegionKey = (usize, (i32, i32));
 
+/// A picture a game paints and gives a Painted stage by name ([packs.md](packs.md#painted)):
+/// `width` by `height` pixels as RGBA, row by row as image files hold them, so that pixel (x, y)
+/// is `pixels[y * width + x]`. Alpha is not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Painting {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<[u8; 4]>,
+}
+
 /// A region a Region stage's job accepted: its curves, and why each attempt before was rejected.
 struct ComputedRegion {
     curves: Arc<[Curve]>,
@@ -691,6 +705,8 @@ pub struct Runtime {
     noises: BTreeMap<String, NoiseConfig>,
     /// The focused row of each table that has one, by table index.
     focused: BTreeMap<usize, Row>,
+    /// The paintings Painted stages read, by name, as the game gave them.
+    paintings: BTreeMap<String, Painting>,
     /// The value of each of the pack's parameters, by name: as given, or its default.
     params: BTreeMap<String, f32>,
     /// Each TableSites stage's sites, by stage index: the row each stands for and the chunks it
@@ -820,6 +836,7 @@ impl Runtime {
             frozen: BTreeMap::new(),
             store: None,
             focused: BTreeMap::new(),
+            paintings: BTreeMap::new(),
             footprints: BTreeMap::new(),
         }
     }
@@ -1131,6 +1148,69 @@ impl Runtime {
                 stage.tables.contains(&index) && !matches!(stage.kind, StageKind::TableSites { .. })
             })
             .map(|(reader, _)| (reader, Stale::All))
+            .collect();
+        Ok(self.invalidate(stale))
+    }
+
+    /// Gives the Painted stages that read painting `name` its pixels, and drops every product that
+    /// read the painting given before, returning them as [`Runtime::set_facts`] does.
+    ///
+    /// # Errors
+    /// [`StageError::Painting`] when the pixels do not fill the picture, or for the first pixel
+    /// whose colour the legend of a stage reading it does not know; the runtime keeps the painting
+    /// it had.
+    pub fn give_painting(
+        &mut self,
+        name: &str,
+        painting: Painting,
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let refused = |message: String| StageError::Painting {
+            painting: name.to_owned(),
+            message,
+        };
+        let size = painting.width as usize * painting.height as usize;
+        if painting.pixels.len() != size {
+            return Err(refused(format!(
+                "{} pixels do not fill {} by {}",
+                painting.pixels.len(),
+                painting.width,
+                painting.height
+            )));
+        }
+        let readers: Vec<usize> = self
+            .pack
+            .stages
+            .iter()
+            .enumerate()
+            .filter(|(_, stage)| {
+                matches!(&stage.kind, StageKind::Painted { painting, .. } if painting == name)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for &reader in &readers {
+            let stage = &self.pack.stages[reader];
+            let StageKind::Painted { legend, .. } = &stage.kind else {
+                unreachable!("only Painted stages read paintings");
+            };
+            let unknown = painting
+                .pixels
+                .iter()
+                .position(|&[r, g, b, _]| !legend.iter().any(|(colour, _)| *colour == [r, g, b]));
+            if let Some(at) = unknown {
+                let [r, g, b, _] = painting.pixels[at];
+                let width = painting.width as usize;
+                return Err(refused(format!(
+                    "pixel ({}, {}) is ({r}, {g}, {b}), which stage {:?}'s legend does not name",
+                    at % width,
+                    at / width,
+                    stage.name
+                )));
+            }
+        }
+        self.paintings.insert(name.to_owned(), painting);
+        let stale = readers
+            .into_iter()
+            .map(|reader| (reader, Stale::All))
             .collect();
         Ok(self.invalidate(stale))
     }
@@ -2384,7 +2464,7 @@ impl Runtime {
             | StageKind::Spawn { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
-            StageKind::Rules { .. } | StageKind::Nearest { .. } => {
+            StageKind::Rules { .. } | StageKind::Nearest { .. } | StageKind::Painted { .. } => {
                 f32::from(self.categorise(index, column, &read)?)
             }
             StageKind::Blur { input, radius } => blur(*radius, column, |x, y| read(input, x, y))?,
@@ -4193,8 +4273,10 @@ impl Runtime {
                 materials,
             }));
         }
-        if let StageKind::Rules { .. } | StageKind::Area { .. } | StageKind::Nearest { .. } =
-            &stage.kind
+        if let StageKind::Rules { .. }
+        | StageKind::Area { .. }
+        | StageKind::Nearest { .. }
+        | StageKind::Painted { .. } = &stage.kind
         {
             let [sx, sy] = self.size;
             let mut values = Vec::with_capacity((sx * sy) as usize);
@@ -4296,6 +4378,7 @@ impl Runtime {
                     }
                     StageKind::Sites { .. }
                     | StageKind::Nearest { .. }
+                    | StageKind::Painted { .. }
                     | StageKind::Volume { .. }
                     | StageKind::Carve { .. }
                     | StageKind::Top { .. }
@@ -5454,7 +5537,42 @@ impl Runtime {
                 }
                 Ok(nearest as u8)
             }
-            _ => unreachable!("only Rules and Nearest stages categorise"),
+            StageKind::Painted {
+                painting,
+                origin,
+                cell,
+                legend,
+                otherwise,
+            } => {
+                let index_of = |name: &str| {
+                    self.categories[index]
+                        .iter()
+                        .position(|known| known == name)
+                        .expect("every category is named") as u8
+                };
+                let picture = self
+                    .paintings
+                    .get(painting)
+                    .ok_or_else(|| StageError::NoPainting(painting.clone()))?;
+                // The pixel holding the column's centre, the picture's x and y along the world's.
+                let scale = stage.scale as f32;
+                let at = |axis: usize, from: f32| {
+                    (((column[axis] as f32 + 0.5) * scale - from) / cell).floor()
+                };
+                let (px, py) = (at(0, origin.0), at(1, origin.1));
+                let (width, height) = (picture.width as f32, picture.height as f32);
+                if !(0.0..width).contains(&px) || !(0.0..height).contains(&py) {
+                    return Ok(index_of(otherwise));
+                }
+                let [r, g, b, _] =
+                    picture.pixels[py as usize * picture.width as usize + px as usize];
+                let (_, name) = legend
+                    .iter()
+                    .find(|(colour, _)| *colour == [r, g, b])
+                    .expect("a painting's colours are checked when it is given");
+                Ok(index_of(name))
+            }
+            _ => unreachable!("only Rules, Nearest and Painted stages categorise"),
         }
     }
 }
