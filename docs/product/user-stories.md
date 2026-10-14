@@ -235,7 +235,15 @@ authored map imports through a [Painted](../reference/packs.md#painted) stage, a
 lining up with the neighbouring zones'. A template image teaches a module set of its patterns
 ([constraints.md](../architecture/constraints.md#what-adjacency-can-express)); where a zone's segments
 are solved with them is the owner's decision
-([#440](https://github.com/AntonTegnelov/wave_forge/issues/440)).
+([#440](https://github.com/AntonTegnelov/wave_forge/issues/440)). The test pack
+(`tests/fixtures/zones.world.ron`, `tests/zones.rs`) has everything else of the first two criteria
+over 4 by 3 zones of an authored map: each zone cut into segments along the cells of a jittered
+grid with warped borders (Cellular noise's cell value through a Rules and a Connected stage), every
+open column reaching every other within its zone and across the world, the paths of neighbouring
+zones meeting at their shared edge, each zone's people drawn from its kind's table by weight on
+open ground, the same world whatever order its chunks come in, and a zone frozen on first emit
+coming back from its snapshot unchanged under a changed pack. Not yet: WFC in the segments, and
+stairs between zones, which a world one level deep has none of.
 
 ### G6. An Elite Dangerous-like galaxy of systems and planets
 
