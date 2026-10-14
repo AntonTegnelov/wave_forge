@@ -121,8 +121,10 @@ A Scatter stage has:
 Today a Scatter stage has the jittered-grid generator with counts and groups per block, the tests
 (height, slope, any Rules-style condition, water depth, a margin from sites, a clearance from other
 Scatter stages' points, which are placed first and so take priority), spacing, and a scale, a tilt
-and a stance along the ground per point ([packs.md](../reference/packs.md#scatter)). The asset
-binding is **not built yet** ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
+and a stance along the ground per point ([packs.md](../reference/packs.md#scatter)). The engines
+bind a game's assets to a point's kind: Godot's node to scenes, drawn as MultiMeshes or as nodes
+([godot.md](../reference/godot.md#scenes)), and Bevy's `StagePlacements` to entities
+([bevy.md](../reference/bevy.md)).
 
 A placement's id is `InstanceId { chunk, local }` (`src/products.rs`): the chunk coordinate and a
 64-bit local id packing the stage (15 bits), a slot (16 bits) and the cell's index (32 bits). It is
@@ -144,8 +146,10 @@ the same in whatever order it is asked for.
 The Solve stage reaches the solver through the `TownSolver` seam, because the stage runtime runs on
 the CPU while a town needs a GPU solver on the thread that owns its device.
 
-WFC inside masks painted or computed by other stages (a Rules stage writing a Prior) is the general
-form, and is **not built yet** ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)). The
+A Solve stage builds a town only inside a mask another stage paints or computes
+([packs.md](../reference/packs.md#solve)). The general form, WFC over a whole region with each part
+of it given its own tiles by a categories stage, is **not built yet**; where it runs is the owner's
+decision ([#440](https://github.com/AntonTegnelov/wave_forge/issues/440)). The
 infinite city of the MVP keeps the streamed WFC world of [world.md](world.md).
 
 ## History and other facts from the game

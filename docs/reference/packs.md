@@ -388,7 +388,8 @@ tables: [
   2^63 or more, or the same parent and number as another; computing the tables refuses one whose
   parent the parent table does not hold (`tests/tables.rs`).
 - A position is two number columns, and a stage that reads positions names them (TableSites'
-  `at`). Curves in tables are not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)).
+  `at`, TableCurves' `from` and `to`). A curve is a row's two positions, one straight stretch, which
+  a [TableCurves](#tablecurves) stage draws; a longer road is a row per stretch.
 
 `Facts::new(pack, seed)` computes every generated table, with the given ones empty.
 `facts.give(table, rows)` replaces a given table's rows, each a `GivenRow` of the game's id and a
@@ -408,8 +409,8 @@ an input, and a town or a region goes with any stale chunk it covers, so burning
 solves its town again and nothing else.
 A stage reading a row with none focused fails with `StageError::NoFocus`. A table's rows become
 sites through a [TableSites](#tablesites) stage, and a town's rule set can follow a names column of
-its row ([Solve](#solve)). Roads from a table's curves are not built yet
-([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)).
+its row ([Solve](#solve)). Its roads, a row per stretch, become curves through a
+[TableCurves](#tablecurves) stage, which an [Apply](#apply) stage levels into the ground.
 
 ## Stages
 
