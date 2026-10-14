@@ -448,6 +448,9 @@ pub struct WaveForgeStages {
     /// Chunks of `far_ground_stage` whose far ground may have to be built again: a field around
     /// them arrived, or near ground came or went on or beside them.
     far_due: std::collections::BTreeSet<ChunkCoord>,
+    /// Groups of far ground whose mesh has to be drawn again, which a frame draws within
+    /// [`FAR_GROUNDS_BUDGET_MS`], nearest the followed position first.
+    far_redraw: std::collections::BTreeSet<ChunkCoord>,
     /// The texture sets `ground_texture_layers` names, while it names any.
     ground_textures: Option<GroundTextures>,
     /// The plugin's own texture sets, once stacked.
@@ -600,6 +603,11 @@ const BODIES_BUDGET_MS: f64 = 1.0;
 
 /// How many coarse chunks get their far ground built per frame at most.
 const FAR_GROUNDS_PER_FRAME: usize = 4;
+
+/// How long drawing groups of far ground again may take Godot's thread in a frame, after the
+/// first: a group is one mesh of up to 16 coarse chunks, rebuilt whole when one of them changes,
+/// which near ground coming and going does every few frames while the player moves.
+const FAR_GROUNDS_BUDGET_MS: f64 = 1.0;
 
 /// How many coarse chunks of far ground, along each side, one mesh draws with one material: a
 /// far ground out to 2 km has thousands of coarse chunks, and a mesh and a material each would cost
@@ -935,6 +943,7 @@ impl INode for WaveForgeStages {
             ground_revisions: HashMap::new(),
             ground_builds: 0,
             far_due: std::collections::BTreeSet::new(),
+            far_redraw: std::collections::BTreeSet::new(),
             far_grounds: HashMap::new(),
             far_built: HashMap::new(),
             far_colours: Vec::new(),
@@ -3339,7 +3348,7 @@ impl WaveForgeStages {
         );
         out.set(
             &"pending_far_grounds".to_variant(),
-            &(self.far_due.len() as i64).to_variant(),
+            &((self.far_due.len() + self.far_redraw.len()) as i64).to_variant(),
         );
         out.set(
             &"pending_colliders".to_variant(),
@@ -4214,7 +4223,9 @@ impl WaveForgeStages {
     /// near ground is drawn and walled off where it meets them ([`far_ground`]). A coarse chunk is
     /// due when a field around it arrives, when its own chunk of `far_ground_material_stage`
     /// arrives, and when near ground comes or goes on or beside a lattice chunk it covers; one
-    /// whose field is dropped is freed.
+    /// whose field is dropped is freed. Each chunk built or freed draws its group again, and the
+    /// groups waiting are drawn nearest first within [`FAR_GROUNDS_BUDGET_MS`], at least one a
+    /// frame.
     fn update_far_ground(
         &mut self,
         arrived: &[ChunkCoord],
@@ -4232,11 +4243,10 @@ impl WaveForgeStages {
             return;
         };
         let scale = scale as i32;
-        let mut regroup = std::collections::BTreeSet::new();
         for chunk in gone {
             self.far_due.remove(chunk);
             if self.far_built.remove(chunk).is_some() {
-                regroup.insert(far_group_of(*chunk));
+                self.far_redraw.insert(far_group_of(*chunk));
             }
         }
         for chunk in arrived {
@@ -4332,7 +4342,7 @@ impl WaveForgeStages {
             });
         }
         for far in built {
-            regroup.insert(far_group_of(far.far.chunk));
+            self.far_redraw.insert(far_group_of(far.far.chunk));
             // The near ground covers the whole coarse chunk: there is nothing of it to draw.
             if far.far.indices.is_empty() {
                 self.far_built.remove(&far.far.chunk);
@@ -4340,7 +4350,21 @@ impl WaveForgeStages {
                 self.far_built.insert(far.far.chunk, far);
             }
         }
-        for group in regroup {
+        let mut waiting: Vec<ChunkCoord> = self.far_redraw.iter().copied().collect();
+        waiting.sort_by_key(|group| {
+            let first =
+                ChunkCoord::new(group.x * FAR_GROUP * scale, group.y * FAR_GROUP * scale, 0);
+            (
+                (first.x - focus.x).abs().max((first.y - focus.y).abs()),
+                *group,
+            )
+        });
+        let drawing = std::time::Instant::now();
+        for group in waiting {
+            if elapsed_ms(drawing) >= FAR_GROUNDS_BUDGET_MS {
+                break;
+            }
+            self.far_redraw.remove(&group);
             self.draw_far_group(group, scale, scenario);
         }
     }
@@ -5713,6 +5737,7 @@ impl WaveForgeStages {
             rendering.free_rid(multimesh);
         }
         self.far_due.clear();
+        self.far_redraw.clear();
         for (_, FarDrawn { mesh, instance, .. }) in self.far_grounds.drain() {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
