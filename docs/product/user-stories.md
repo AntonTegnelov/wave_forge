@@ -620,9 +620,10 @@ meets these for a streamed WFC world (a small band rule set) with colliders and 
 through dozen. On the reference desktop, walking through a cave volume at 4.2 m/s holds the node's
 bar and Godot's (the node's p99 0.11 to 0.14 ms, the slowest frame 5.5 to 6.0 ms), and the city
 streamed in Godot runs at p99 5.4 to 7.0 ms with a slowest frame of 22 to 23 ms
-([measurements.md](../research/measurements.md) D3, D8); the stage worlds with drawn content are
-the desktop script's `preset` part, not yet run: `measure_city_preset.gd` walks a camera into the
-small city preset at 4.2 m/s, its town, grass, bodies and navigation built around it. In the dev
+([measurements.md](../research/measurements.md) D3, D8). Walking a camera into the small city
+preset at 4.2 m/s, its town, grass, bodies and navigation built around it, the desktop holds the
+node's bar on both APIs, its p99 0.37 to 0.42 ms, at p99 1.57 to 1.85 ms a frame, the slowest frame
+8.4 to 10.0 ms (`measure_city_preset.gd`, D27). In the dev
 container the node's own time over that walk was 10 ms at the 99th percentile in frames that built 8
 grounds at once, 8 ms once ground was given 2 ms a frame
 ([measurements.md](../research/measurements.md) E55, E56,
@@ -646,7 +647,10 @@ ground meets the near ground's edge at its height, so where the coarse ground di
 full detail the step slopes across the far squares beside it instead of standing as a wall: the
 canyon's near square no longer reads as a pit in its oblique view (`tests/far_ground.rs`,
 `render_presets.gd -- views canyon`, [#401](https://github.com/AntonTegnelov/wave_forge/issues/401)). Nothing
-is measured at 2 km on a desktop yet ([desktop-measurements.md](../guides/desktop-measurements.md)). Beyond the 100 m Godot's shadows reach by default, the far ground's valleys darken by how much of the sky the land around hides, a Horizon stage over its coarse height given to the far and near ground alike, in both engines (`tests/horizon.rs`, `verify_far.gd`, Bevy's `stages.rs`; 0.155 ms a coarse chunk and no seam where they meet, E72, [#367](https://github.com/AntonTegnelov/wave_forge/issues/367)). Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.
+is measured at 2 km on a desktop as a story of its own yet; the continent played back from its bake
+with its far ground out to about 2 km runs at p99 1.6 to 1.8 ms a frame at 1080p on the reference
+desktop, and the hills preset's far ground costs its GPU about 1.8 ms a frame
+([measurements.md](../research/measurements.md) D18, D25). Beyond the 100 m Godot's shadows reach by default, the far ground's valleys darken by how much of the sky the land around hides, a Horizon stage over its coarse height given to the far and near ground alike, in both engines (`tests/horizon.rs`, `verify_far.gd`, Bevy's `stages.rs`; 0.155 ms a coarse chunk and no seam where they meet, E72, [#367](https://github.com/AntonTegnelov/wave_forge/issues/367)). Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.
 
 ### P3. Fast into a new world
 
@@ -693,8 +697,9 @@ updates a 3×3-chunk preview within 200 ms on a reference desktop, measured per 
 (2026-09-29): a changed pack parameter regenerates only the stages that read it and what reads
 them (`tests/presets.rs`), and in the dev container the islands preset's 3×3-chunk preview is
 generated again in about 2 ms, per stage in [measurements.md](../research/measurements.md) L33.
-The same run on a reference desktop is the measurement script's stages part
-([#224](https://github.com/AntonTegnelov/wave_forge/issues/224)).
+On the reference desktop, with the erosion stages the preset has gained since, a changed `land` or
+`roughness` regenerates the preview in 67 to 72 ms, half of it the `eroded` stage, within the
+200 ms ([measurements.md](../research/measurements.md) D22).
 
 ## M: maximal worlds
 
@@ -778,9 +783,11 @@ the library's whole run took 676 s, over the 10 minutes
 ([measurements.md](../research/measurements.md) D10,
 [#319](https://github.com/AntonTegnelov/wave_forge/issues/319)). Since then the stages that read a
 square of an input around each column read it once per chunk, and a Volume its inputs once over its
-chunk's columns, and in the dev container the whole run fell from 729 to 418 s (L55, L56); the
-desktop has not run it again. The bake's time and the
-playback's frame times and memory there are the desktop script's `m1` part, not yet run.
+chunk's columns, and in the dev container the whole run fell from 729 to 418 s (L55, L56). On the
+reference desktop the node's bake of `continent.tscn`, far ground included, took 708 and 723 s,
+still over the 10 minutes, its `rock` stage the costliest at 111 s of L34's part (D23, D24). Played
+back at 1080p it walks and flies at p99 1.6 to 1.8 ms a frame with no stage run, but flying meets
+single frames of 267 ms on Vulkan and 1 124 ms on Direct3D 12, over the 16.7 ms bar (D25).
 
 ### M2. Generate a maximal world once before play
 
@@ -812,5 +819,5 @@ the saved history from what it wrote; with every chunk there it plays the world 
 generating nothing. Its `check.gd` checks the history repeats for its seed, the progress, stopping
 and resuming. Made from nothing in the dev container, the history takes 0.5 s and the whole
 world 664 s, holding at most 1.87 GB, and the world then plays with no stage run
-([measurements.md](../research/measurements.md) L49). Left: the time and the playback on a
-reference desktop (the desktop script's `m2` and `m1` parts).
+([measurements.md](../research/measurements.md) L49). On the reference desktop the history takes
+3.1 s and the whole world 645.8 s, over the 10 minutes (D26), and the playback is M1's (D25).

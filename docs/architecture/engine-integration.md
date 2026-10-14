@@ -151,6 +151,15 @@ both engines.
 | SpawnPoints | a user `PackedScene`, preloaded with `ResourceLoader.load_threaded_request` | an entity event to a user binding (a glTF scene or a scene function) |
 | ChunkHash | multiplayer agreement and golden checks | the same |
 
+A chunk's visual instances stay a MultiMesh per prototype rather than one mesh merged per chunk.
+On a desktop's Forward+ a merged chunk saves 0.2 to 0.4 ms of an idle frame, but building one cost
+Godot's thread 60 to 100 ms a chunk and stalled a walk at 30 m/s for seconds, while a MultiMesh per
+prototype costs 0.3 to 0.4 ms a chunk ([measurements.md](../research/measurements.md) D14, D15).
+The merge there was built in GDScript, so one built in the extension would cost Godot's thread
+less; what it would save, a fraction of a millisecond a frame, is small against P1's budget either
+way. Bevy's entities sharing one mesh handle are
+the same choice: Bevy batches them into instanced draws.
+
 ## Where the solver and product kernels run
 
 ### Godot: the solver stays on its own device
@@ -451,6 +460,5 @@ engines make that impossible or pointless:
 Left open by the research and answered since: the cost of rebuilding occluders while streaming
 ([measurements.md](../research/measurements.md) E50), vertex-shader grass on Compatibility (E45),
 and one key scheme for localisation catalogues, `wf-<category>-<token>`
-([packs.md](../reference/packs.md#locations)). Still open: grass on Forward+
-([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)), the best hook for writes on
+([packs.md](../reference/packs.md#locations)), and grass on Forward+ (D16, D17). Still open: the best hook for writes on
 Godot's main `RenderingDevice`, and Bevy's occlusion culling on Direct3D 12 and Metal in 0.20.
