@@ -646,8 +646,11 @@ generates about 58 000 chunks a second of its own time, each covering 64 of the 
 ground meets the near ground's edge at its height, so where the coarse ground disagrees with the
 full detail the step slopes across the far squares beside it instead of standing as a wall: the
 canyon's near square no longer reads as a pit in its oblique view (`tests/far_ground.rs`,
-`render_presets.gd -- views canyon`, [#401](https://github.com/AntonTegnelov/wave_forge/issues/401)). Nothing
-is measured at 2 km on a desktop as a story of its own yet; the continent played back from its bake
+`render_presets.gd -- views canyon`, [#401](https://github.com/AntonTegnelov/wave_forge/issues/401)). P2's own
+measurement flies a camera at 30 m/s over the hills preset generated live with its far levels out
+to 2 km (`measure_view.gd`): in the dev container its near and far levels generate 139 000 and
+155 000 chunks a second of their own time, 40 and 25 a second of the flight (E75), and its frame
+rate on a desktop is the desktop script's `preset` part, not yet run. The continent played back from its bake
 with its far ground out to about 2 km runs at p99 1.6 to 1.8 ms a frame at 1080p on the reference
 desktop, and the hills preset's far ground costs its GPU about 1.8 ms a frame
 ([measurements.md](../research/measurements.md) D18, D25). Beyond the 100 m Godot's shadows reach by default, the far ground's valleys darken by how much of the sky the land around hides, a Horizon stage over its coarse height given to the far and near ground alike, in both engines (`tests/horizon.rs`, `verify_far.gd`, Bevy's `stages.rs`; 0.155 ms a coarse chunk and no seam where they meet, E72, [#367](https://github.com/AntonTegnelov/wave_forge/issues/367)). Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.

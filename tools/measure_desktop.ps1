@@ -22,7 +22,8 @@ stages test, which checks the stages come out on Windows bit for bit as recorded
 And M1: the maximal preset's continent baked once ahead of time, headless (measure_world_run.gd), then
 played from what it baked on each graphics API, walking and flying, on Forward+ (measure_playback.gd).
 And P1 on a stage world: a camera walked into the small city preset on each graphics API, on Forward+
-(measure_city_preset.gd). And M2, once, headless: a new world made from nothing, the
+(measure_city_preset.gd); and P2: a camera flown over the hills preset generated live with its far
+ground out to 2 km (measure_view.gd). And M2, once, headless: a new world made from nothing, the
 game's history and then the whole continent (examples/new_world/measure.gd).
 
 Everything goes into measurements/<date-time>/ in the repository, and a zip of it next to that
@@ -299,6 +300,8 @@ foreach ($api in $Apis) {
     if ($Only -contains "preset") {
         [void](Invoke-Logged "preset-city-$api" $Godot (@("--path", $GodotProject) + $renderer + @(
             "--script", "measure_city_preset.gd", "--", "--seconds", $seconds, "--out", (Join-Path $Results "preset.txt"))))
+        [void](Invoke-Logged "preset-view-$api" $Godot (@("--path", $GodotProject) + $renderer + @(
+            "--script", "measure_view.gd", "--", "--seconds", $seconds, "--out", (Join-Path $Results "preset.txt"))))
     }
     if ($Only -contains "ground") {
         foreach ($script in @("render_ground", "render_lods", "render_far")) {
