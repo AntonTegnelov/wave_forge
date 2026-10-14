@@ -123,15 +123,15 @@ Each is a gap between the code and the design or the stories, with where it is t
   reports are all the observability there is.
 - **Kernel internals have no unit tests.** The kernel is checked through whole-region results, the
   CPU oracle and the golden world; its generated source and workgroup budget are unit tested.
-- **Golden worlds cover tiles, not images or products.** Instance sets and chunk hashes are not in
-  them yet.
+- **Golden records cover tiles and products, not images.** The golden world pins the streamed
+  city's tiles, and golden chunk hashes pin stage worlds' products, towns solved on the GPU included
+  (`golden_stages.rs`, `golden_chunks.rs`, `colony.rs`); no rendered picture is a golden record.
 - **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage,
   and volumes one `f32` per voxel between two levels, whose surface both engines draw and collide
   with, materials included; Carve stages cut tunnels and rooms into them, and a player digs and
   fills them through the edits log. Godot meshes surfaces on a thread of their own and holds P1's
   bars in the container (E54) and on a desktop (D21), and Bevy still meshes on its
-  main thread
-  ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71));
+  main thread;
   curves from region jobs, networks between sites and tables are drawn into height fields; tables of facts reach stages through a focused row, sites, towns and
   roads
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a frozen chunk no request needs
@@ -147,9 +147,11 @@ Each is a gap between the code and the design or the stories, with where it is t
   column's height, which can differ from the mesh between column centres by up to half a column's
   slope; `ground_height` gives the mesh's own height for what a game places itself.
 - **No levels of detail** for the exported module meshes; they wait for authored models
-  ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)).
+  ([#202](https://github.com/AntonTegnelov/wave_forge/issues/202)).
 - **Scenes bound to points are pooled only when they reset themselves**
-  ([godot.md](../reference/godot.md#scenes)), and there are no authoring tools
+  ([godot.md](../reference/godot.md#scenes)). The authoring tools are Godot's: presets, the stage
+  stack, brushes, the bake, the kit import and the candidate viewer in its editor
+  ([godot.md](../reference/godot.md#editor)); Bevy's wait for Bevy's editor
   ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). Far proxies, occluders and GI by
   content class are built ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)); occluders
   pay only from street level (E50). A Bevy example maps region tags to `bevy_kira_audio` and place
