@@ -74,9 +74,9 @@ Headless apps with the real `DefaultPlugins` test both ([reference/bevy.md](../r
 installs them, each with a check `verify.sh` runs: `history` puts a GDScript history into a
 continent as tables of facts (N11), and `new_world` generates the maximal continent whole when a
 player starts a new world, with the game's history, a progress screen, stopping and resuming, and
-then plays it from its folder (M2). The maximal continent itself is `examples/continent` (M1). What
-M1 and M2 still need is their numbers on a desktop
-([desktop-measurements.md](../guides/desktop-measurements.md)).
+then plays it from its folder (M2). The maximal continent itself is `examples/continent` (M1). On
+the reference desktop both run over their 10 minutes ([#319](https://github.com/AntonTegnelov/wave_forge/issues/319)), and M1's playback flies with
+single frames over its bar ([#442](https://github.com/AntonTegnelov/wave_forge/issues/442); [measurements.md](../research/measurements.md) D24 to D26).
 
 **Tooling.** The `wave-forge` CLI, PNG and isometric renderers, glTF model export for the city's
 modules, an invariant checker, the streaming, game-session, order-diff and golden-world tests
@@ -106,8 +106,9 @@ Each is a gap between the code and the design or the stories, with where it is t
   Godot's frame loop free; a backend over Godot's device needs a desktop measurement first
   ([engine-integration.md](../architecture/engine-integration.md#godot-the-solver-stays-on-its-own-device),
   [#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
-- **No desktop numbers.** Every timing comes from the dev container's translated driver or from
-  lavapipe ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+- **Desktop numbers come from one machine.** Two runs on the owner's NVIDIA RTX 3070
+  ([measurements.md](../research/measurements.md) D1 to D28); no other vendor's GPU is measured
+  ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
 - **Order independence has a limit:** worlds more than one chunk tall
   ([world.md](../architecture/world.md#what-determinism-means-here)). The city needs a repair in
   about one chunk in ten.
@@ -128,8 +129,7 @@ Each is a gap between the code and the design or the stories, with where it is t
   and volumes one `f32` per voxel between two levels, whose surface both engines draw and collide
   with, materials included; Carve stages cut tunnels and rooms into them, and a player digs and
   fills them through the edits log. Godot meshes surfaces on a thread of their own and holds P1's
-  bars in the container (E54); a desktop's numbers are
-  [#224](https://github.com/AntonTegnelov/wave_forge/issues/224), and Bevy still meshes on its
+  bars in the container (E54) and on a desktop (D21), and Bevy still meshes on its
   main thread
   ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71));
   curves from region jobs, networks between sites and tables are drawn into height fields; tables of facts reach stages through a focused row, sites, towns and
@@ -141,7 +141,7 @@ Each is a gap between the code and the design or the stories, with where it is t
   ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, with levels of detail and skirts
   that Godot and Bevy draw by distance; both draw its materials and grass and sway plants in the
-  wind; Forward+ measurements are [#166](https://github.com/AntonTegnelov/wave_forge/issues/166).
+  wind; on a desktop's Forward+ the grass costs less than its measurement varies (D16, D17).
   Beyond it, a far ground from a coarse height stage meets it without a gap
   ([packs.md](../reference/packs.md#far-ground)). Scattered points stand at their
   column's height, which can differ from the mesh between column centres by up to half a column's

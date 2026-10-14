@@ -87,13 +87,11 @@ Each step is a verified pull request that updates the stories it moves.
    outside memory that is built ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142));
    then the maximal preset.
 
-**Waiting on the owner's hardware:** the frame-time measurement of own against shared devices on
-desktops with native drivers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). It
-decides the device policy in both engines, whether a backend over Godot's `RenderingDevice` is worth
-building, and whether the P stories' targets hold. Also grass and ground levels on Forward+ on a
-desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)), and what a volume costs
-there ([#224](https://github.com/AntonTegnelov/wave_forge/issues/224)). One script takes all of
-them ([desktop-measurements.md](../guides/desktop-measurements.md)).
+**Waiting on other hardware:** the frame-time measurement of own against shared devices on a GPU
+of another vendor than NVIDIA ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), which
+with the owner's NVIDIA runs ([measurements.md](../research/measurements.md) D1, D12) decides the
+device policy in both engines and whether a backend over Godot's `RenderingDevice` is worth
+building. The desktop script takes it ([desktop-measurements.md](../guides/desktop-measurements.md)).
 
 **Before any release:** builds for every desktop platform the Godot Asset Store expects (Windows,
 macOS, Linux), and a note in the extension on where godot-rust's MPL-2.0 source can be obtained.
