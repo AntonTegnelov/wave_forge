@@ -116,6 +116,22 @@ fn a_run_stopped_and_resumed_writes_the_same_bytes_as_one_at_once() {
     assert_eq!(pieces.0, at_once.0);
 }
 
+#[test]
+fn a_run_on_several_threads_writes_the_same_bytes_as_one_on_one_thread() {
+    let mut one = Memory::default();
+    runtime(PACK)
+        .run_world(&TARGETS, &mut one, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+    let mut several = Memory::default();
+
+    runtime(PACK)
+        .with_threads(std::num::NonZeroUsize::new(4).expect("four"))
+        .run_world(&TARGETS, &mut several, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    assert_eq!(several.0, one.0);
+}
+
 // A finished continent's store is gigabytes, and reading it back once for every target only to
 // skip it made resuming a done run take most of the time the run did.
 #[test]

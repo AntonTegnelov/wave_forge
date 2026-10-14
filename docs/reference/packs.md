@@ -1134,7 +1134,8 @@ to a Scatter point's. It works at the WFC lattice's scale on a volume of that sc
 
 `Region(job: "rivers", region: 4, halo: 1, inputs: ["height"], budget: 8)`: curves computed once per
 square region of `region` chunks by a region job, Rust code the game gives the runtime with
-`Runtime::with_region_job(name, job)`. A chunk's product is the region's curves that pass through
+`Runtime::with_region_job(name, job)`; it is `Send` and `Sync`, since a runtime may generate on
+several threads. A chunk's product is the region's curves that pass through
 it. `halo` (default 0) and `budget` (default 1) are optional, and the stage reads its inputs over
 its region and `halo` chunks around it.
 
@@ -1360,6 +1361,13 @@ let trees = runtime.points("trees", chunk);
   first; `step(budget)` generates at most `budget` products, so a caller can take new requests in
   between; `is_idle` says whether anything is left.
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
+- `with_threads(n)` lets a step generate a stage's products on up to `n` threads at once: the
+  products whose inputs are ready are shared out, each to whichever thread is free, when by what the
+  stage's products have cost so far they come to more than 2 ms. What getting a chunk ready needs
+  done first (a region job, a location table, a cave's plan) and a frozen chunk's product are done
+  one at a time. A product is a function of what the runtime holds, so the threads change how soon
+  a world is generated and never what it holds (`tests/threads.rs`). A runtime starts with one,
+  which leaves the other cores to the game.
   its values over an area of its own columns, row by row with x fastest, without generating any
   chunk: exactly what the chunks would hold. Field, Rules, Nearest, Painted, Blur, Delta, Horizon, Erode and Area stages whose
   inputs are too can be sampled, and so can Lakes, Droplets, Talus, Connected and Passages stages, each computed once over the

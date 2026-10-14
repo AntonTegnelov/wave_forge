@@ -3,6 +3,7 @@
 
 use super::runtime::SiteId;
 use crate::towns::{Outside, Selector, Town, TownError, TownRequest, TownSolver};
+use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -46,7 +47,9 @@ pub(crate) struct Done {
 /// runtime drops its end, and then drops the solver before the drop returns.
 pub(crate) struct TownThread {
     jobs: Sender<Job>,
-    done: Receiver<Done>,
+    /// Behind a lock only so a runtime can be shared between the threads that generate its
+    /// products; only the runtime's own thread takes from it.
+    done: Mutex<Receiver<Done>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -87,7 +90,7 @@ impl TownThread {
             .expect("a thread");
         Self {
             jobs,
-            done,
+            done: Mutex::new(done),
             thread: Some(thread),
         }
     }
@@ -102,16 +105,17 @@ impl TownThread {
     /// # Errors
     /// [`Stopped`] if the thread has stopped, which only a panic in the solver does.
     pub(crate) fn take(&self, wait: Duration) -> Result<Vec<Done>, Stopped> {
+        let finished = self.done.lock().expect("no thread panics holding the lock");
         let mut done = Vec::new();
         if wait > Duration::ZERO {
-            match self.done.recv_timeout(wait) {
+            match finished.recv_timeout(wait) {
                 Ok(first) => done.push(first),
                 Err(RecvTimeoutError::Timeout) => return Ok(done),
                 Err(RecvTimeoutError::Disconnected) => return Err(Stopped),
             }
         }
         loop {
-            match self.done.try_recv() {
+            match finished.try_recv() {
                 Ok(next) => done.push(next),
                 Err(TryRecvError::Empty) => return Ok(done),
                 Err(TryRecvError::Disconnected) if done.is_empty() => return Err(Stopped),
