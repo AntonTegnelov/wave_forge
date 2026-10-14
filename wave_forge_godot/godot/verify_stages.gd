@@ -181,7 +181,7 @@ func _process(_delta: float) -> bool:
 	if moved:
 		return _check_dropped(waited)
 	if walking:
-		walk_frames.append(world.stats()["last_frame_ms"])
+		walk_frames.append(world.last_frame_ms())
 		return false
 	if checked:
 		if _navigation_crosses_town(waited) and _occluders_stand_in_the_towns() and _drawn_collide():
