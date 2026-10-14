@@ -6,9 +6,11 @@
 ## off, its far ground reaching about 2 km. Once the view around the first settlement is drawn it measures
 ## two phases of `--seconds` each: `walk`, at eye height along +x at 4.2 m/s, and `fly`, 60 m above
 ## the ground along +x at 30 m/s. Each prints one line of `key=value` fields (the window's size,
-## frames, median, 99th percentile and slowest frame in milliseconds, the most memory the process
-## has held, and the stages that ran, which for a played world is none), appended to `--out` as well
-## when it is given. A stage that ran fails the run.
+## frames, median, 99th percentile and slowest frame in milliseconds, the node's own time per frame
+## at the 99th percentile and its slowest, and in the slowest frame and the frames either side, the
+## most memory the process has held, and the stages that ran, which for a played world is none),
+## appended to `--out` as well when it is given. A stage that ran fails the run. A slowest frame
+## whose node time is small spent its time outside the node: drawing, or the engine's own work.
 extends SceneTree
 
 const PeakMemory := preload("res://peak_memory.gd")
@@ -29,6 +31,8 @@ var position := START
 var phase_started_usec := 0
 var last_usec := 0
 var frames := PackedFloat64Array()
+## The node's own time in each frame of `frames`.
+var node_frames := PackedFloat64Array()
 ## The ground's height under the camera when last known: the played world draws the ground a
 ## moment after the camera reaches it, and before the first view none is known.
 var ground := 0.0
@@ -115,6 +119,7 @@ func _process(_delta: float) -> bool:
 			_start("walk")
 		return false
 	frames.append(frame_ms)
+	node_frames.append(stages.last_frame_ms())
 	position.x += PHASES[phase] * frame_ms / 1000.0
 	_place_camera(EYE_M if phase == "walk" else FLIGHT_M)
 	if elapsed < seconds:
@@ -130,6 +135,7 @@ func _process(_delta: float) -> bool:
 func _start(next: String) -> void:
 	phase = next
 	frames = PackedFloat64Array()
+	node_frames = PackedFloat64Array()
 	phase_started_usec = Time.get_ticks_usec()
 
 ## Prints the phase's line; returns whether the run goes on.
@@ -143,10 +149,19 @@ func _report() -> bool:
 		return false
 	var ran: Dictionary = stages.stats()["stages"]
 	var size := root.get_visible_rect().size
-	var line := "measure_playback adapter=\"%s\" driver=%s method=%s size=%dx%d phase=%s speed=%s frames=%d p50_ms=%.2f p99_ms=%.2f max_ms=%.2f peak_mb=%.0f stages_ran=%d" % [
+	var nodes := node_frames.duplicate()
+	nodes.sort()
+	# A frame's time is measured when the next begins, so the node's time of the slowest frame is
+	# taken as the most it spent in that frame or either neighbour.
+	var slowest := frames.find(sorted[sorted.size() - 1])
+	var around := 0.0
+	for i in range(maxi(slowest - 1, 0), mini(slowest + 2, node_frames.size())):
+		around = maxf(around, node_frames[i])
+	var line := "measure_playback adapter=\"%s\" driver=%s method=%s size=%dx%d phase=%s speed=%s frames=%d p50_ms=%.2f p99_ms=%.2f max_ms=%.2f node_p99_ms=%.2f node_max_ms=%.2f node_at_max_ms=%.2f peak_mb=%.0f stages_ran=%d" % [
 		RenderingServer.get_video_adapter_name(), RenderingServer.get_current_rendering_driver_name(),
 		RenderingServer.get_current_rendering_method(), size.x, size.y, phase, PHASES[phase], sorted.size(),
-		at.call(0.5), at.call(0.99), sorted[sorted.size() - 1], peak_mb, ran.size()]
+		at.call(0.5), at.call(0.99), sorted[sorted.size() - 1],
+		nodes[roundi((nodes.size() - 1) * 0.99)], nodes[nodes.size() - 1], around, peak_mb, ran.size()]
 	print(line)
 	if out != "":
 		var file := FileAccess.open(out, FileAccess.READ_WRITE) if FileAccess.file_exists(out) else FileAccess.open(out, FileAccess.WRITE)
