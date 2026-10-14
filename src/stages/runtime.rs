@@ -36,8 +36,10 @@ use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownSolver};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use wfc_core::ChunkCoord;
 use wfc_core::hash::pcg3d;
 
@@ -630,6 +632,22 @@ pub struct Painting {
 }
 
 /// A region a Region stage's job accepted: its curves, and why each attempt before was rejected.
+/// A product generated and the milliseconds it took, or why it could not be.
+type Generated = Result<(Product, f64), StageError>;
+
+/// The milliseconds a stage's chunks of a step are expected to take before they are shared out
+/// between threads.
+const PARALLEL_MS: f64 = 2.0;
+
+/// A chunk a step generates: where it is in its stage's queue, its product if it is frozen and
+/// kept, and the milliseconds getting it ready took.
+struct Pending {
+    at: usize,
+    chunk: ChunkCoord,
+    frozen: Option<Arc<Product>>,
+    ms: f64,
+}
+
 struct ComputedRegion {
     curves: Arc<[Curve]>,
     rejected: Vec<String>,
@@ -706,6 +724,8 @@ pub struct Runtime {
     noises: BTreeMap<String, NoiseConfig>,
     /// The focused row of each table that has one, by table index.
     focused: BTreeMap<usize, Row>,
+    /// How many threads a step generates a stage's products on at once.
+    pub(crate) threads: NonZeroUsize,
     /// The paintings Painted stages read, by name, as the game gave them.
     paintings: BTreeMap<String, Painting>,
     /// The value of each of the pack's parameters, by name: as given, or its default.
@@ -837,6 +857,7 @@ impl Runtime {
             frozen: BTreeMap::new(),
             store: None,
             focused: BTreeMap::new(),
+            threads: NonZeroUsize::MIN,
             paintings: BTreeMap::new(),
             footprints: BTreeMap::new(),
         }
@@ -1756,6 +1777,17 @@ impl Runtime {
         }
     }
 
+    /// Generates on up to `threads` threads at once: in each step, the products of a stage whose
+    /// inputs are ready are generated together, each on whichever thread is free. A product is a
+    /// function of what the runtime holds, so the threads change how soon a world is generated and
+    /// never what it holds. A runtime starts with one, which leaves the other cores to the game; a
+    /// world generated ahead of time, before play, can take them all.
+    #[must_use]
+    pub const fn with_threads(mut self, threads: NonZeroUsize) -> Self {
+        self.threads = threads;
+        self
+    }
+
     /// Gives frozen stages a store for the chunks no request needs, so they leave memory without
     /// being lost: a chunk goes to the store when a request drops it and comes back from it when a
     /// request needs it again. Without one, a runtime keeps every frozen chunk it has generated.
@@ -2138,14 +2170,22 @@ impl Runtime {
                 continue;
             };
             // From the nearest down, past the chunks that wait for their towns, which stay queued.
+            // What generating a chunk needs done first, and a frozen chunk's product, are done
+            // here one at a time; the products are then generated together.
+            let mut batch: Vec<Pending> = Vec::new();
             let mut at = queue.len();
-            while at > 0 && generated.len() < budget {
+            while at > 0 && generated.len() + batch.len() < budget {
                 at -= 1;
                 let chunk = queue[at];
                 if self.products.contains_key(&(index, chunk)) {
                     queue.remove(at);
+                    // Every chunk batched so far lies above `at` in the queue.
+                    for pending in &mut batch {
+                        pending.at -= 1;
+                    }
                     continue;
                 }
+                let started = Instant::now();
                 let frozen = if self.pack.stages[index].persist == Persist::Frozen {
                     self.frozen_product(index, chunk)?
                 } else {
@@ -2156,37 +2196,108 @@ impl Runtime {
                     if self.waits_for_town(index, chunk) {
                         continue;
                     }
+                    self.assemble_of(index, chunk)?;
+                    self.run_region_of(index, chunk)?;
+                    self.place_locations_of(index, chunk)?;
+                    self.fill_region_field_of(index, chunk)?;
+                    self.plan_cave_of(index, chunk)?;
                 }
-                let started = std::time::Instant::now();
-                let product = match frozen {
-                    Some(frozen) => Product::clone(&frozen),
+                batch.push(Pending {
+                    at,
+                    chunk,
+                    frozen,
+                    ms: started.elapsed().as_secs_f64() * 1000.0,
+                });
+            }
+            let mut made = self.generate_all(index, &batch).into_iter();
+            for pending in &batch {
+                let (product, ms) = match &pending.frozen {
+                    Some(frozen) => (Product::clone(frozen), 0.0),
                     None => {
-                        self.assemble_of(index, chunk)?;
-                        self.run_region_of(index, chunk)?;
-                        self.place_locations_of(index, chunk)?;
-                        self.fill_region_field_of(index, chunk)?;
-                        self.plan_cave_of(index, chunk)?;
-                        let product = self.generate(index, chunk)?;
+                        let (product, ms) =
+                            made.next().expect("a product for every chunk not frozen")?;
                         if self.pack.stages[index].persist == Persist::Frozen {
                             self.frozen
-                                .insert((index, chunk), Arc::new(product.clone()));
+                                .insert((index, pending.chunk), Arc::new(product.clone()));
                         }
-                        product
+                        (product, ms)
                     }
                 };
                 let product = self.edited(index, product);
-                let ms = started.elapsed().as_secs_f64() * 1000.0;
+                let ms = pending.ms + ms;
                 let timing = &mut self.timings[index];
                 timing.products += 1;
                 timing.ms += ms;
                 timing.slowest_ms = timing.slowest_ms.max(ms);
-                self.products.insert((index, chunk), Arc::new(product));
-                generated.push((self.pack.stages[index].name.clone(), chunk));
-                queue.remove(at);
+                self.products
+                    .insert((index, pending.chunk), Arc::new(product));
+                generated.push((self.pack.stages[index].name.clone(), pending.chunk));
+            }
+            // Nearest first is lowest last, so each removal leaves the positions still to go.
+            for pending in &batch {
+                queue.remove(pending.at);
             }
         }
         self.queued = Some(queued);
         Ok(generated)
+    }
+
+    /// The products of stage `index` at the chunks of `batch` that are not frozen, in the batch's
+    /// order, each with the milliseconds it took, generated on up to [`Runtime::with_threads`]
+    /// threads at once. A product is a function of what the runtime holds, so the threads change
+    /// when each is done and never what it is.
+    fn generate_all(&self, index: usize, batch: &[Pending]) -> Vec<Generated> {
+        let chunks: Vec<ChunkCoord> = batch
+            .iter()
+            .filter(|pending| pending.frozen.is_none())
+            .map(|pending| pending.chunk)
+            .collect();
+        let timed = |chunk: ChunkCoord| {
+            let started = Instant::now();
+            self.generate(index, chunk)
+                .map(|product| (product, started.elapsed().as_secs_f64() * 1000.0))
+        };
+        // Starting a thread costs some tens of microseconds, more than most products take, so a
+        // stage's chunks are shared out only when, by what its products have cost so far, they
+        // come to more than a few milliseconds.
+        let timing = &self.timings[index];
+        let expected_ms = timing.ms / timing.products.max(1) as f64 * chunks.len() as f64;
+        let threads = if expected_ms < PARALLEL_MS {
+            1
+        } else {
+            self.threads.get().min(chunks.len())
+        };
+        if threads <= 1 {
+            return chunks.into_iter().map(timed).collect();
+        }
+        // Each thread takes the next chunk no thread has taken, so a dear chunk holds up no other.
+        let next = AtomicUsize::new(0);
+        let mut made: Vec<(usize, Generated)> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..threads)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut mine = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(&chunk) = chunks.get(i) else {
+                                return mine;
+                            };
+                            mine.push((i, timed(chunk)));
+                        }
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| {
+                    worker
+                        .join()
+                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                })
+                .collect()
+        });
+        made.sort_by_key(|(i, _)| *i);
+        made.into_iter().map(|(_, product)| product).collect()
     }
 
     /// Each stage's needed chunks that are not generated yet, farthest from the focus first, so

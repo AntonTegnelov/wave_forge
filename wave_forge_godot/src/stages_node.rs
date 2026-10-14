@@ -2980,8 +2980,8 @@ impl WaveForgeStages {
         VarDictionary::new()
     }
 
-    /// Generates the whole world of the pack's bound ahead of time, on a thread of its own: the
-    /// node's `targets` over every chunk, each chunk's products kept under `directory` the moment
+    /// Generates the whole world of the pack's bound ahead of time, on threads of its own, as many
+    /// as the machine has cores: the node's `targets` over every chunk, each chunk's products kept under `directory` the moment
     /// it is done, which `play_directory` then plays ([packs.md](packs.md#a-whole-world-ahead-of-time)).
     /// Progress arrives as `world_run_progress`, the end as `world_run_finished`;
     /// `cancel_world_run` stops it, and running it again resumes from what `directory` holds. The
@@ -3020,7 +3020,11 @@ impl WaveForgeStages {
         let thread = std::thread::Builder::new()
             .name("wave forge world run".to_owned())
             .spawn(move || {
-                let run = build().and_then(|mut runtime| {
+                let run = build().and_then(|runtime| {
+                    // Ahead of time, before play, the run can take every core.
+                    let threads =
+                        std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::MIN);
+                    let mut runtime = runtime.with_threads(threads);
                     runtime
                         .set_facts(facts)
                         .and_then(|_| runtime.set_params(&params))

@@ -82,8 +82,9 @@ pub enum Attempt {
 /// A computation over a whole region, which a Region stage names.
 ///
 /// It must be pure: the same [`RegionInput`] gives the same [`Attempt`]. It reads inputs only
-/// through [`RegionInput::field`], which refuses a column outside the region and its halo.
-pub trait RegionJob: Send {
+/// through [`RegionInput::field`], which refuses a column outside the region and its halo. A
+/// runtime generates on several threads at once, so a job is `Sync` as well as `Send`.
+pub trait RegionJob: Send + Sync {
     /// One attempt at the region.
     ///
     /// # Errors
