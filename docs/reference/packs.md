@@ -273,7 +273,8 @@ pack's largest regions and aligned with them, each asked for whole, so a region'
 generated once, not once for each row of chunks that crosses it, `64` products a step for each of
 the runtime's threads ([`with_threads`](#the-runtime)). It keeps each chunk's products of
 its targets in the store the moment its block is done, together in one entry under the layer
-`world run`, each product as a frozen chunk is kept. A target of a coarser scale, such as the height
+`world run`, each product as a frozen chunk is kept; a block's chunks are encoded together on the
+runtime's threads and kept in order. A target of a coarser scale, such as the height
 a far ground is drawn from, has its chunk that covers the chunk kept in that entry, so each of its
 chunks is in the entry of every chunk it covers, and playback reads it from the first of those in
 the bound. A world is then a file per chunk in a
