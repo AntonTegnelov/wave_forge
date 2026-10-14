@@ -208,9 +208,12 @@ library's. Which adapters the dev container and CI use is in
   seconds-long solve. A pipeline depends on the region shape alone, so every batch size of one
   shape shares it; `BlockSolver::warm` compiles a list of shapes up front, the pipelines of
   different shapes at once, each on a thread of its own; and `WgpuBackend::cache_pipelines_in`
-  keeps compiled pipelines in a file named for the adapter and driver, which roughly halves a later
-  start's compile on the dev container's stack ([measurements.md](../research/measurements.md) E32
-  to E34, E41). A town compiles every kernel its world runs this way just before it is solved, on
+  keeps compiled pipelines in a file named for the adapter (its vendor and device), which roughly
+  halves a later start's compile on the dev container's stack ([measurements.md](../research/measurements.md) E32
+  to E34, E41). A driver is meant to refuse a cache an older version of it wrote; dozen did not
+  when the host's Direct3D 12 driver was updated under it, and failed on the stale pipelines as out
+  of memory, losing the device. Such a failure is reported as `BackendError::StaleCache` and deletes
+  the file, so the next start compiles afresh, rather than crashing the process on every start. A town compiles every kernel its world runs this way just before it is solved, on
   the stage runtime's town thread, so nothing else waits for it (E42). Compiling a pack's town
   kernels any earlier was measured and not taken (below).
 
