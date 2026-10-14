@@ -632,6 +632,47 @@ pub struct Painting {
 }
 
 /// A region a Region stage's job accepted: its curves, and why each attempt before was rejected.
+/// `f` of every item, in the items' order, worked out on up to `threads` threads at once, each
+/// taking the next item no thread has taken, so a dear item holds up no other. A panic in `f` is
+/// passed on as it was.
+pub(crate) fn map_on_threads<T: Sync, R: Send>(
+    threads: usize,
+    items: &[T],
+    f: impl Fn(&T) -> R + Sync,
+) -> Vec<R> {
+    let threads = threads.min(items.len());
+    if threads <= 1 {
+        return items.iter().map(f).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let mut made: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(i) else {
+                            return mine;
+                        };
+                        mine.push((i, f(item)));
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    made.sort_by_key(|(i, _)| *i);
+    made.into_iter().map(|(_, made)| made).collect()
+}
+
 /// A product generated and the milliseconds it took, or why it could not be.
 type Generated = Result<(Product, f64), StageError>;
 
@@ -2267,37 +2308,7 @@ impl Runtime {
         } else {
             self.threads.get().min(chunks.len())
         };
-        if threads <= 1 {
-            return chunks.into_iter().map(timed).collect();
-        }
-        // Each thread takes the next chunk no thread has taken, so a dear chunk holds up no other.
-        let next = AtomicUsize::new(0);
-        let mut made: Vec<(usize, Generated)> = std::thread::scope(|scope| {
-            let workers: Vec<_> = (0..threads)
-                .map(|_| {
-                    scope.spawn(|| {
-                        let mut mine = Vec::new();
-                        loop {
-                            let i = next.fetch_add(1, Ordering::Relaxed);
-                            let Some(&chunk) = chunks.get(i) else {
-                                return mine;
-                            };
-                            mine.push((i, timed(chunk)));
-                        }
-                    })
-                })
-                .collect();
-            workers
-                .into_iter()
-                .flat_map(|worker| {
-                    worker
-                        .join()
-                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-                })
-                .collect()
-        });
-        made.sort_by_key(|(i, _)| *i);
-        made.into_iter().map(|(_, product)| product).collect()
+        map_on_threads(threads, &chunks, |&chunk| timed(chunk))
     }
 
     /// Each stage's needed chunks that are not generated yet, farthest from the focus first, so

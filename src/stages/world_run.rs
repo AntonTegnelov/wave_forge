@@ -11,7 +11,7 @@
 
 use super::codec;
 use super::pack::Pack;
-use super::runtime::{Runtime, StageError, StageTiming};
+use super::runtime::{Runtime, StageError, StageTiming, map_on_threads};
 use crate::FocusPoint;
 use crate::frozen::{FrozenStore, StoreError};
 use std::collections::BTreeMap;
@@ -121,19 +121,29 @@ impl Runtime {
                     }
                 }
             }
+            // Encoding a chunk's products is a function of them alone, so the due chunks are
+            // encoded together on the runtime's threads, and kept in the block's order.
+            let kept: Vec<(ChunkCoord, Encoded)> = due
+                .iter()
+                .map(|&chunk| (chunk, others.remove(&chunk).unwrap_or_default()))
+                .collect();
+            let encoded = map_on_threads(self.threads.get(), &kept, |(chunk, others)| {
+                let mut products = others.clone();
+                for &target in targets {
+                    let product = self
+                        .product(target, covering(self.pack(), target, *chunk))
+                        .expect("a target is generated over the chunk it was asked for");
+                    products.push((target.to_owned(), codec::encode(product)));
+                }
+                // By name, so the bytes do not depend on the order the targets were listed in.
+                products.sort_by(|a, b| a.0.cmp(&b.0));
+                codec::encode_chunk(&codec::Entry { digest, products })
+            });
+            let mut encoded: BTreeMap<ChunkCoord, Vec<u8>> =
+                due.iter().copied().zip(encoded).collect();
             for chunk in block {
-                if due.contains(&chunk) {
-                    let mut products = others.remove(&chunk).unwrap_or_default();
-                    for &target in targets {
-                        let product = self
-                            .product(target, covering(self.pack(), target, chunk))
-                            .expect("a target is generated over the chunk it was asked for");
-                        products.push((target.to_owned(), codec::encode(product)));
-                    }
-                    // By name, so the bytes do not depend on the order the targets were listed in.
-                    products.sort_by(|a, b| a.0.cmp(&b.0));
-                    let entry = codec::Entry { digest, products };
-                    store.keep(RUN_LAYER, chunk, codec::encode_chunk(&entry))?;
+                if let Some(bytes) = encoded.remove(&chunk) {
+                    store.keep(RUN_LAYER, chunk, bytes)?;
                 } else {
                     state.skipped += 1;
                 }
@@ -172,6 +182,9 @@ pub(crate) fn entry_of(pack: &Pack, scale: u32, chunk: ChunkCoord, size: [u32; 2
         })
         .expect("a chunk in the bound covers chunks in it")
 }
+
+/// A chunk's products of some targets, each encoded, by the target's name.
+type Encoded = Vec<(String, Vec<u8>)>;
 
 /// What a store holds of a world run's targets at one chunk ([`held`]).
 enum Held {
