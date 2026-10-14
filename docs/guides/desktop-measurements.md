@@ -25,7 +25,9 @@ took and the most memory it held (`measure_world_run.gd`), for M1's ten minutes;
 plays what it wrote. Also once and headless, a new world made from nothing as a game makes one,
 the game's history and then the whole continent until it plays (`examples/new_world/measure.gd`),
 for M2's ten minutes. Then, also once and headless: the history example's first towns, on the first run after building and on a second
-one, for P3's time into a new world; `tests/golden_stages.rs`, which checks that the stages come
+one, and the small city preset's time to a playable area around the player and to its first town,
+with no kernels cached and then with what that run cached (`measure_first_play.gd`), for P3's time
+into a new world; `tests/golden_stages.rs`, which checks that the stages come
 out on Windows bit for bit as recorded on Linux ([engine-integration.md](../architecture/engine-integration.md#noise-that-means-the-same-in-both-engines));
 `tests/interactive_edit.rs`, how long a changed parameter takes to regenerate a 3×3-chunk preview,
 for P6 ([measurements.md](../research/measurements.md) L33); `wfc-devtools/tests/continent.rs`, what part of
