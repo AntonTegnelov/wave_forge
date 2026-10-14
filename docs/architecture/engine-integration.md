@@ -90,8 +90,14 @@ on at a point, from a module set's `indoor`, `sounds` and `surface` fields
 areas and pooled players ([godot.md](../reference/godot.md#sound-and-surfaces)); a biome is a Rules
 stage's category; a location's name is a translation key with arguments
 ([packs.md](../reference/packs.md#locations)); Bevy gives the same data through its world
-resource ([bevy.md](../reference/bevy.md)) and maps it to no audio crate yet. Colliders are built by the Godot node from a shape the game assigns per module. The
-other products are not built yet; [roadmap.md](../plan/roadmap.md) has their issues.
+resource, and its `sound_and_names` example maps it to `bevy_kira_audio` and Fluent
+([bevy.md](../reference/bevy.md#sound-and-names)). Colliders: the Godot nodes build bodies from a
+shape the game assigns per module and from the ground's height grid, and Bevy gives the height grid
+and a volume surface's triangles for a physics crate to take. For a world of stages, the ground is
+built too, a HeightTile with its levels and a MaterialTile as each vertex's category
+([packs.md](../reference/packs.md#ground)), with the CoverMap a grass shader expands, the curves of
+region jobs, rivers and tables as Splines, and a ChunkHash per chunk
+([packs.md](../reference/packs.md#hashes)).
 
 Configuration that goes with the products rather than being emitted per chunk:
 
