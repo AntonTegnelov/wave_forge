@@ -1,0 +1,51 @@
+// A world of zones (docs/product/user-stories.md, G5): an authored
+// map, a pixel per zone of 32 by 32 columns, says what each zone is; each zone is cut into segments
+// along the cells of a jittered grid with warped borders, its open ground is joined so that every
+// open column reaches every other and the paths of neighbouring zones meet, and its people are
+// drawn from its kind's table by weight. Painted by the test (tests/zones.rs) as 4 by 3 zones.
+(
+    version: 1,
+    bound: Some(Rect(min: (0.0, 0.0), max: (127.0, 95.0))),
+    noises: {
+        // A random value per jittered cell, about 12 columns across, the borders warped: segments.
+        "segments": (noise_type: Cellular, seed: 41, frequency: 0.08, fractal_type: None,
+            cellular_return_type: CellValue, cellular_jitter: 0.9,
+            domain_warp_enabled: true, domain_warp_amplitude: 6.0, domain_warp_frequency: 0.05),
+    },
+    stages: [
+        (name: "zone", kind: Painted(painting: "map", origin: (0.0, 0.0), cell: 32.0,
+            legend: [((40, 140, 40), "jungle"), ((200, 180, 90), "desert"), ((120, 120, 130), "ruins")],
+            otherwise: "desert")),
+        (name: "cells", kind: Field(FastNoise("segments"))),
+        (name: "segment_kind", kind: Rules(rules: [
+            (category: "low", when: [Less(Input("cells"), Constant(-0.33))]),
+            (category: "middle", when: [Less(Input("cells"), Constant(0.33))]),
+        ], otherwise: "high")),
+        // Each zone's segments: a zone is a region of 4 chunks a side.
+        (name: "segments", kind: Connected(input: "segment_kind", region: 4)),
+        // Rock, thinner in the jungle; ground above 0.6 is open before the passages.
+        (name: "rock", kind: Field(Add(Noise(frequency: 0.12, octaves: 2),
+            Mul(Is("zone", ["jungle"]), Constant(0.12))))),
+        (name: "open", persist: Frozen, kind: Passages(open: "rock", above: 0.6, region: 4)),
+        (name: "floor", kind: Field(Constant(0.0))),
+        // The people of each kind of zone, by weight, only on open ground.
+        (name: "jungle_folk", persist: Frozen, kind: Scatter(height: "floor", spacing: 4, apart: 2,
+            kinds: [(kind: "raider", weight: 3.0), (kind: "herder", weight: 1.0)],
+            when: [
+                Greater(Is("zone", ["jungle"]), Constant(0.5)),
+                Greater(Input("open"), Constant(0.5)),
+            ])),
+        (name: "desert_folk", persist: Frozen, kind: Scatter(height: "floor", spacing: 4, apart: 2,
+            kinds: [(kind: "nomad", weight: 1.0), (kind: "jackal", weight: 1.0)],
+            when: [
+                Greater(Is("zone", ["desert"]), Constant(0.5)),
+                Greater(Input("open"), Constant(0.5)),
+            ])),
+        (name: "ruins_folk", persist: Frozen, kind: Scatter(height: "floor", spacing: 4, apart: 2,
+            kinds: [(kind: "beetle", weight: 4.0), (kind: "drone", weight: 1.0)],
+            when: [
+                Greater(Is("zone", ["ruins"]), Constant(0.5)),
+                Greater(Input("open"), Constant(0.5)),
+            ])),
+    ],
+)
