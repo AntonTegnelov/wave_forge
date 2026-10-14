@@ -181,6 +181,11 @@ stack and a preload would be wrong on any other machine.
   `WGPU_BACKEND=vulkan` if another backend is probed first.
 - **wgpu picks llvmpipe although dozen is listed:** the instance was not built from the environment
   (see [Adapters](#adapters)).
+- **After a Windows driver update, a world fails with "the driver failed on the pipeline cache":**
+  dozen keeps its identity when the Direct3D 12 driver under it changes, so the kernel cache an
+  older driver wrote is loaded and fails as out of memory, losing the device. The error deletes the
+  file and the next run compiles afresh; the caches of the scratch Godot projects under
+  `~/.local/share/godot/app_userdata/*/wave_forge/kernels` each fail once in the same way.
 
 ## Software Vulkan (lavapipe)
 

@@ -51,6 +51,14 @@ pub enum BackendError {
     Readback(String),
     #[error("the pipeline cache at {path} could not be read or written: {reason}")]
     Cache { path: String, reason: String },
+    /// The driver failed to make a pipeline from the cache, most likely one an older driver wrote
+    /// that this one does not refuse as it should, and lost the device doing so. The file is
+    /// deleted, so a new device starts without it.
+    #[error(
+        "the driver failed on the pipeline cache at {path} ({reason}), most likely one an older \
+         driver wrote; it is deleted, and generating again starts without it"
+    )]
+    StaleCache { path: String, reason: String },
 }
 
 /// A compute API the block solver can run on.

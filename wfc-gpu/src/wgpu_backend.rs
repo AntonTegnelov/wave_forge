@@ -5,12 +5,15 @@
 //! test uses [`WgpuBackend::from_env`].
 //!
 //! Compiling a kernel takes seconds on some drivers, so a backend can keep compiled pipelines in a
-//! file with [`WgpuBackend::cache_pipelines_in`]: a later run on the same adapter and driver starts
-//! from them.
+//! file with [`WgpuBackend::cache_pipelines_in`]: a later run on the same adapter starts from them.
+//! A driver is meant to refuse a cache an older version of it wrote, and native Vulkan drivers do,
+//! but dozen, Vulkan over Direct3D 12, keeps its own identity when the Direct3D 12 driver under it
+//! is updated; that driver then fails on the stale pipelines, as out of memory, and loses the
+//! device. So such a failure deletes the file and is reported as [`BackendError::StaleCache`].
 
 use crate::backend::{BackendError, BackendLimits, BufferUsage, ComputeBackend};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// The workgroup memory the solver asks for when it makes its own device. Chunks of 8x8x8 with a
@@ -34,6 +37,9 @@ pub struct WgpuBackend {
     adapter: Option<wgpu::AdapterInfo>,
     /// Compiled pipelines kept across runs, and the file they are kept in.
     cache: Option<(wgpu::PipelineCache, PathBuf)>,
+    /// Whether the driver failed on the cache: its file is deleted, and the stale data it holds is
+    /// never written again, even by a pipeline another thread makes on the lost device.
+    stale_cache: AtomicBool,
 }
 
 /// Work submitted to wgpu, and how many of its readbacks have been mapped.
@@ -112,6 +118,7 @@ impl WgpuBackend {
             limits,
             adapter: None,
             cache: None,
+            stale_cache: AtomicBool::new(false),
         }
     }
 
@@ -147,9 +154,10 @@ impl WgpuBackend {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(cache_error(error)),
         };
-        // SAFETY: wgpu requires the data to come from an earlier cache of this adapter and driver.
-        // The file is named by `pipeline_cache_key`, which is derived from exactly those, so only
-        // such a cache is ever loaded; `fallback` makes wgpu start empty if the data is stale.
+        // SAFETY: wgpu requires the data to come from an earlier cache of this adapter. The file is
+        // named by `pipeline_cache_key`, from the adapter's vendor and device, so only such a cache
+        // is ever loaded; `fallback` makes wgpu start empty when the driver sees the data is stale,
+        // and `create_pipeline` deletes the file when the driver fails on it instead.
         let cache = unsafe {
             self.device
                 .create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
@@ -239,9 +247,15 @@ impl ComputeBackend for WgpuBackend {
     }
 
     fn create_pipeline(&self, wgsl: &str, entry: &str) -> Result<Self::Pipeline, BackendError> {
-        // Errors reach the device's error scope rather than this call, so the scope is what the
-        // caller is told about: a kernel that does not compile must not look like a working one.
-        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        // Errors reach the device's error scopes rather than this call, so the scopes are what the
+        // caller is told about: a kernel that does not compile must not look like a working one,
+        // and a driver out of memory must not end the process.
+        let scopes = [
+            wgpu::ErrorFilter::Validation,
+            wgpu::ErrorFilter::OutOfMemory,
+            wgpu::ErrorFilter::Internal,
+        ]
+        .map(|filter| self.device.push_error_scope(filter));
         let module = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -258,10 +272,37 @@ impl ComputeBackend for WgpuBackend {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 cache: self.cache.as_ref().map(|(cache, _)| cache),
             });
-        if let Some(error) = pollster::block_on(scope.pop()) {
-            return Err(BackendError::Kernel(error.to_string()));
+        // Popped innermost first; the first error the driver gave is the one reported.
+        let mut first = None;
+        for scope in scopes.into_iter().rev() {
+            if let Some(error) = pollster::block_on(scope.pop()) {
+                first.get_or_insert(error);
+            }
+        }
+        match (first, &self.cache) {
+            (None, _) => {}
+            (
+                Some(error @ (wgpu::Error::OutOfMemory { .. } | wgpu::Error::Internal { .. })),
+                Some((_, path)),
+            ) => {
+                self.stale_cache.store(true, Ordering::Relaxed);
+                return Err(match std::fs::remove_file(path) {
+                    Err(reason) if reason.kind() != std::io::ErrorKind::NotFound => {
+                        BackendError::Cache {
+                            path: path.display().to_string(),
+                            reason: reason.to_string(),
+                        }
+                    }
+                    _ => BackendError::StaleCache {
+                        path: path.display().to_string(),
+                        reason: error.to_string(),
+                    },
+                });
+            }
+            (Some(error), _) => return Err(BackendError::Kernel(error.to_string())),
         }
         if let Some((cache, path)) = &self.cache
+            && !self.stale_cache.load(Ordering::Relaxed)
             && let Some(data) = cache.get_data()
         {
             // Written beside the file and renamed over it, so a crash never leaves half a cache.
