@@ -13,7 +13,9 @@ guide. In short, on each graphics API in -Apis:
     render_lods.gd, render_far.gd), what grass costs at eye level at a radius of 2 with every
     blade and at radii of 3 and 4 thinning with distance (measure_grass.gd), and the hills preset
     seen oblique and from the top, where its far ground fills the picture (measure_far.gd).
-And once, P3: the history example's first towns, on a first run and a second one; the golden
+And once, P3: the history example's first towns, on a first run and a second one, and the
+small city preset's time to a playable area and to its first town with no kernels cached and with
+them (measure_first_play.gd); the golden
 stages test, which checks the stages come out on Windows bit for bit as recorded on Linux; and
 (#71, P1) what a cave volume costs a chunk, three times, while a player walks through it
 (measure_volume.gd, headless).
@@ -327,6 +329,13 @@ if ($Only -contains "history") {
     foreach ($attempt in @("first", "second")) {
         [void](Invoke-Logged "history-$attempt" $Godot @("--headless", "--path", $HistoryProject, "--script", "check.gd"))
     }
+    # P3: into the small city preset with no kernels cached, then with what that run cached.
+    $FirstPlayKernels = Join-Path $BuildDir "first-play-kernels"
+    Remove-Item -Recurse -Force $FirstPlayKernels -ErrorAction SilentlyContinue
+    foreach ($attempt in @("cold", "cached")) {
+        [void](Invoke-Logged "first-play-$attempt" $Godot @("--headless", "--path", $GodotProject, "--script", "measure_first_play.gd",
+            "--", "--kernels", $FirstPlayKernels, "--out", (Join-Path $Results "p3.txt")))
+    }
 }
 
 if ($Only -contains "volume") {
@@ -348,7 +357,7 @@ if ($Only -contains "stages") {
 
 $summary = New-Object System.Collections.Generic.List[string]
 $summary.AddRange([string[]](Get-Content (Join-Path $Results "system.txt")))
-foreach ($file in @("bevy.txt", "godot_city.txt", "m1.txt", "m2.txt", "preset.txt")) {
+foreach ($file in @("bevy.txt", "godot_city.txt", "m1.txt", "m2.txt", "preset.txt", "p3.txt")) {
     $path = Join-Path $Results $file
     if (Test-Path $path) { $summary.Add(""); $summary.AddRange([string[]](Get-Content $path)) }
 }

@@ -658,7 +658,12 @@ desktop, and the hills preset's far ground costs its GPU about 1.8 ms a frame
 
 **Acceptance criteria.** Time from pressing play to a playable area around the player under 5 s on a
 reference desktop with compiled kernels cached, and the first-run time recorded. Today it is about
-14 s in the dev container, most of it compiling kernels. **Status:** not started (2026-09-24). The valley pack's first town arrives 8.0 to 8.2 s after it is asked for on a cold start, almost all of it compiling its kernels, and 3.9 to 4.0 s with the kernels cached from an earlier run; towns are solved on a thread of their own, so every other stage, which together takes 72 ms, never waits for one ([measurements.md](../research/measurements.md) E29, E34, E42). A streamed `WaveForgeWorld` keeps its kernels in `kernel_cache` too: the city's world warms in 11.3 to 11.9 s cold and 3.9 to 4.4 s from the cache (E63). Compiling a pack's kernels before its first town was measured and does not do better ([solver.md](../architecture/solver.md#alternatives-that-were-measured-or-read-and-not-taken)). The story still needs its whole walkthrough from pressing play.
+14 s in the dev container, most of it compiling kernels. **Status:** in progress (2026-10-14): the
+small city preset is playable around the camera 1.3 to 1.5 s after its node enters the tree, and
+its first town arrives after 8.6 to 9.1 s with no kernels cached and 1.4 to 1.5 s with them, in the
+dev container through dozen (`measure_first_play.gd`, [measurements.md](../research/measurements.md)
+E74); the desktop script's `history` part takes the same on a reference desktop, and the walkthrough
+from pressing play in the editor is still to time. The valley pack's first town arrives 8.0 to 8.2 s after it is asked for on a cold start, almost all of it compiling its kernels, and 3.9 to 4.0 s with the kernels cached from an earlier run; towns are solved on a thread of their own, so every other stage, which together takes 72 ms, never waits for one ([measurements.md](../research/measurements.md) E29, E34, E42). A streamed `WaveForgeWorld` keeps its kernels in `kernel_cache` too: the city's world warms in 11.3 to 11.9 s cold and 3.9 to 4.4 s from the cache (E63). Compiling a pack's kernels before its first town was measured and does not do better ([solver.md](../architecture/solver.md#alternatives-that-were-measured-or-read-and-not-taken)). The story still needs its whole walkthrough from pressing play.
 
 ### P4. Memory that stays bounded
 
