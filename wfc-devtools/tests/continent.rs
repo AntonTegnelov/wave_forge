@@ -755,6 +755,7 @@ fn the_whole_continent_runs_ahead_of_time() {
         )
     }));
     let mut runtime = runtime()
+        .with_threads(std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::MIN))
         .with_towns(Box::new(towns().expect("the cultures compile")))
         .expect("matching chunks");
     let mut store = Measure::default();

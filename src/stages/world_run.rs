@@ -23,7 +23,7 @@ use wfc_core::ChunkCoord;
 /// file per chunk rather than one per chunk and target; no stage may take its name.
 pub(crate) const RUN_LAYER: &str = "world run";
 
-/// Products a block generates between looks at the time.
+/// Products a block generates between looks at the time, for each thread it generates on.
 const BLOCK_STEP: usize = 64;
 /// How often a block being generated reports, so a run can be stopped part way through one.
 const REPORT_EVERY: Duration = Duration::from_secs(1);
@@ -108,7 +108,7 @@ impl Runtime {
                 let mut reported = Instant::now();
                 while !self.is_idle() {
                     // Nothing generated means what is left waits for towns.
-                    if self.step(BLOCK_STEP)?.is_empty() {
+                    if self.step(BLOCK_STEP * self.threads.get())?.is_empty() {
                         self.wait_for_towns(REPORT_EVERY)?;
                     }
                     if reported.elapsed() >= REPORT_EVERY {

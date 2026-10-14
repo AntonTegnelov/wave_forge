@@ -375,8 +375,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   near. `candidate_under(from, along)` gives the same for the candidate under a ray, within a cell
   of where the ray first meets the ground the candidates stand on, the Scatter stage's height
   field, whatever `ground_stage` is.
-- `run_world(directory)` generates the pack's whole finite world ahead of time on a thread of its
-  own, the node's `targets` over every chunk of the bound, keeping each chunk's products under
+- `run_world(directory)` generates the pack's whole finite world ahead of time on threads of its
+  own, as many as the machine has cores, the node's `targets` over every chunk of the bound, keeping each chunk's products under
   `directory` as it is done; `world_run_progress(done, total, stages)` reports each chunk, and
   every second while a block generates, with what each stage has generated so far in the form of
   `stats()["stages"]`, `world_run_finished(done, total)` the end, and `cancel_world_run()` stops
