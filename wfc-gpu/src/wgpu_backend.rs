@@ -13,8 +13,8 @@
 
 use crate::backend::{BackendError, BackendLimits, BufferUsage, ComputeBackend};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// The workgroup memory the solver asks for when it makes its own device. Chunks of 8x8x8 with a
 /// one-cell halo at 81 tiles need about 23 KiB, over the 16 KiB every device must offer.
@@ -39,7 +39,9 @@ pub struct WgpuBackend {
     cache: Option<(wgpu::PipelineCache, PathBuf)>,
     /// Whether the driver failed on the cache: its file is deleted, and the stale data it holds is
     /// never written again, even by a pipeline another thread makes on the lost device.
-    stale_cache: AtomicBool,
+    /// Held while the cache file is written or deleted, so a pipeline made on another thread
+    /// never writes it back between the flag being set and the file going.
+    stale_cache: Mutex<bool>,
 }
 
 /// Work submitted to wgpu, and how many of its readbacks have been mapped.
@@ -118,7 +120,7 @@ impl WgpuBackend {
             limits,
             adapter: None,
             cache: None,
-            stale_cache: AtomicBool::new(false),
+            stale_cache: Mutex::new(false),
         }
     }
 
@@ -285,7 +287,11 @@ impl ComputeBackend for WgpuBackend {
                 Some(error @ (wgpu::Error::OutOfMemory { .. } | wgpu::Error::Internal { .. })),
                 Some((_, path)),
             ) => {
-                self.stale_cache.store(true, Ordering::Relaxed);
+                let mut stale = self
+                    .stale_cache
+                    .lock()
+                    .expect("no thread panics holding the lock");
+                *stale = true;
                 return Err(match std::fs::remove_file(path) {
                     Err(reason) if reason.kind() != std::io::ErrorKind::NotFound => {
                         BackendError::Cache {
@@ -301,8 +307,12 @@ impl ComputeBackend for WgpuBackend {
             }
             (Some(error), _) => return Err(BackendError::Kernel(error.to_string())),
         }
+        let stale = self
+            .stale_cache
+            .lock()
+            .expect("no thread panics holding the lock");
         if let Some((cache, path)) = &self.cache
-            && !self.stale_cache.load(Ordering::Relaxed)
+            && !*stale
             && let Some(data) = cache.get_data()
         {
             // Written beside the file and renamed over it, so a crash never leaves half a cache.
