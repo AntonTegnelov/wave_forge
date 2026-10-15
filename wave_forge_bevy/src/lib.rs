@@ -219,6 +219,14 @@ impl<S: Solver + Send + Sync + 'static> WaveForgeWorld<S> {
         self.generator.chunk(coord)
     }
 
+    /// A 64-bit hash of a generated chunk's tiles ([`wave_forge::tiles_hash`]), or `None` if it has
+    /// not been generated: two players with the same seed and rule set get the same hash for every
+    /// chunk, and a chunk whose hashes differ is one to send and [`WaveForgeWorld::import`].
+    #[must_use]
+    pub fn chunk_hash(&self, coord: ChunkCoord) -> Option<u64> {
+        self.chunk(coord).map(wave_forge::tiles_hash)
+    }
+
     /// Puts a chunk's tiles in place of what was generated there: another peer's when two
     /// disagree about the chunk's hash, or a chunk the game kept. They are taken as they are, and
     /// the next frame reports the chunk as [`ChunkUpdated`], so what a game built from it is built

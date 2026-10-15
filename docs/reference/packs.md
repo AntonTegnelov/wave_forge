@@ -263,6 +263,9 @@ a world compare hashes to confirm they agree (`tests/hashes.rs`; `golden_chunks.
 [testing.md](../guides/testing.md) across GPU vendors). Another seed or an edit gives another hash.
 A hash is for agreeing, not for security: FNV-1a is fast and stable, not hard to forge. Both engines
 give them ([godot.md](godot.md#waveforgestages), [bevy.md](bevy.md#packs-of-stages)).
+`wave_forge::tiles_hash(chunk)` hashes a WFC world's chunk the same way, FNV-1a over each tile's
+index as two bytes, little-endian, in the chunk's cell order: a chunk whose hashes differ between
+two players is one to send, which `import` takes in both engines (`tests/facade.rs`).
 
 ## A whole world ahead of time
 

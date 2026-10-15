@@ -924,6 +924,20 @@ impl WaveForgeWorld {
         true
     }
 
+    /// A 64-bit hash of a generated chunk's tiles, as 16 hexadecimal digits
+    /// ([`wave_forge::tiles_hash`]); empty when the chunk has not been generated. Two players with
+    /// the same seed and rule set get the same hash for every chunk, so a chunk whose hashes differ
+    /// is one to send with `tiles_at` and `import_tiles`.
+    #[func]
+    fn chunk_hash(&self, chunk: Vector3i) -> GString {
+        self.worker
+            .as_ref()
+            .and_then(|worker| worker.chunk(from_vector(chunk)))
+            .map_or_else(GString::new, |chunk| {
+                GString::from(format!("{:016x}", wave_forge::tiles_hash(chunk)).as_str())
+            })
+    }
+
     /// The chunk a position in Godot's world space falls in.
     #[func]
     fn chunk_at(&self, position: Vector3) -> Vector3i {

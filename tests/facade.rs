@@ -241,6 +241,47 @@ fn a_worker_reports_an_imported_chunk_with_its_tiles() {
 }
 
 #[test]
+fn a_chunks_tiles_hash_agrees_wherever_it_is_generated_and_changes_with_any_tile() {
+    let mut one = world(false);
+    one.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    one.run_until_idle().expect("the reference solves");
+    let mut other = world(false);
+    for chunk in [(2, 2), (0, 0), (1, 1)] {
+        other.request(&[FocusPoint::new(ChunkCoord::new(chunk.0, chunk.1, 0), 0)]);
+        other.run_until_idle().expect("the reference solves");
+    }
+    let coord = ChunkCoord::new(1, 1, 0);
+    let chunk = one.chunk(coord).expect("generated").clone();
+    let mut changed = chunk.clone();
+    changed.tiles[17] = (changed.tiles[17] + 1) % TILES as u16;
+
+    let hash = wave_forge::tiles_hash(&chunk);
+
+    assert_eq!(
+        hash,
+        wave_forge::tiles_hash(other.chunk(coord).expect("generated"))
+    );
+    assert_ne!(hash, wave_forge::tiles_hash(&changed));
+}
+
+#[test]
+fn a_chunks_tiles_hash_is_fnv_1a_over_its_tiles_little_endian() {
+    // Peers compare these, so the value is a protocol: tiles 0, 1, 2 hashed as six bytes.
+    let chunk = Chunk {
+        coord: ChunkCoord::new(0, 0, 0),
+        tiles: vec![0, 1, 2].into_boxed_slice(),
+        version: 1,
+    };
+    let expected = [0u8, 0, 1, 0, 2, 0]
+        .iter()
+        .fold(0xCBF2_9CE4_8422_2325_u64, |hash, &byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01B3)
+        });
+
+    assert_eq!(wave_forge::tiles_hash(&chunk), expected);
+}
+
+#[test]
 fn dropping_a_worker_does_not_wait_for_its_thread() {
     // A generator that takes as long to build as the test lets it, as compiling kernels does.
     let (release, held) = std::sync::mpsc::channel::<()>();

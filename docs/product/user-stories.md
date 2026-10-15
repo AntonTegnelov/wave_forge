@@ -582,7 +582,9 @@ trees hash alike on NVIDIA through dozen and on Mesa's lavapipe (`golden_chunks.
 lavapipe against the fixture recorded on NVIDIA, as `golden_world.rs` does for a city's tiles). A
 Godot node given another's edits log hashes its chunk alike (`verify_edits.gd`), and Bevy's
 resource hashes as the runtime does (`wave_forge_bevy/tests/stages.rs`)
-([#431](https://github.com/AntonTegnelov/wave_forge/pull/431)).
+([#431](https://github.com/AntonTegnelov/wave_forge/pull/431)). A streamed WFC world hashes a
+chunk's tiles too (`tiles_hash`, `chunk_hash` in both engines), and a chunk whose hashes differ
+can be sent and imported (`import_tiles`, `import`).
 
 ### N11. Put my own history into the world
 

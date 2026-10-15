@@ -76,7 +76,9 @@ extension needs none of godot-rust's thread-safety features.
   disagree about the chunk's hash, or a chunk the game kept. `chunk_updated` then fires for it, and
   its bodies, navigation, proxies, occluders and sound are built again from them; tiles of another
   count than a chunk's cells, a tile the rule set lacks, a chunk outside the world and a node that
-  has not started are refused with an error and change nothing.
+  has not started are refused with an error and change nothing. `chunk_hash(chunk)` is a 64-bit hash
+  of a generated chunk's tiles as 16 hexadecimal digits, empty before it is generated
+  ([packs.md](packs.md#hashes)), the same on every machine with the same seed and rule set.
 - **Space:** `chunk_at(position)`, `position_of(chunk)`, `cell_position(chunk, cell)`,
   `chunk_size()`.
 - **Drawing:** `instance_sets(chunk, names)` gives one dictionary per module with its `name`, its
