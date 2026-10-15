@@ -874,6 +874,56 @@ impl WaveForgeWorld {
         }
     }
 
+    /// Puts a chunk's tiles in place of what was generated there, in [`WaveForgeWorld::tiles_at`]'s
+    /// order: another peer's when two disagree about the chunk's hash, or a chunk the game kept.
+    /// They are taken as they are. `chunk_updated` then fires for the chunk, and everything built
+    /// from its tiles, bodies, navigation, proxies, occluders and sound, is built again from these.
+    /// Returns whether they were taken; an array of another length than a chunk's cells, a tile the
+    /// rule set does not have, a chunk outside the world, or a node that has not started is reported
+    /// as an error and changes nothing.
+    #[func]
+    fn import_tiles(&mut self, chunk: Vector3i, tiles: PackedInt32Array) -> bool {
+        let Some(worker) = &self.worker else {
+            godot_error!("wave forge: import_tiles before start");
+            return false;
+        };
+        let extent = self.extent();
+        let cells = extent.shape().cells() as usize;
+        if tiles.len() != cells {
+            godot_error!(
+                "wave forge: {} tiles for chunk {chunk}, whose chunks hold {cells} cells",
+                tiles.len()
+            );
+            return false;
+        }
+        let count = self.tile_count();
+        let Some(tiles) = tiles
+            .as_slice()
+            .iter()
+            .map(|&tile| {
+                u16::try_from(tile)
+                    .ok()
+                    .filter(|&tile| i32::from(tile) < count)
+            })
+            .collect::<Option<Box<[u16]>>>()
+        else {
+            godot_error!("wave forge: chunk {chunk} names a tile beyond the rule set's {count}");
+            return false;
+        };
+        let coord = from_vector(chunk);
+        if !extent.contains_chunk(coord) {
+            godot_error!("wave forge: chunk {chunk} lies outside the world");
+            return false;
+        }
+        let version = worker.chunk(coord).map_or(1, |known| known.version + 1);
+        worker.import(wave_forge::Chunk {
+            coord,
+            tiles,
+            version,
+        });
+        true
+    }
+
     /// The chunk a position in Godot's world space falls in.
     #[func]
     fn chunk_at(&self, position: Vector3) -> Vector3i {

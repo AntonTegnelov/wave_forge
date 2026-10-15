@@ -515,16 +515,16 @@ impl<S: Solver> WorldGenerator<S> {
             });
         }
         for chunk in restored {
-            let coord = chunk.coord;
             self.import(chunk)?;
             self.stats.restored += 1;
-            self.events.push(ChunkEvent::Updated(coord));
         }
         Ok(())
     }
 
-    /// Puts a chunk back, for example one a game had persisted. It is taken as it is: every
-    /// operation around it reads its tiles, whatever phase of the schedule it is in.
+    /// Puts a chunk back, for example one a game had persisted, or another machine's when the two
+    /// disagree. It is taken as it is: every operation around it reads its tiles, whatever phase of
+    /// the schedule it is in. It is reported as [`ChunkEvent::Updated`] with the next events, so
+    /// what an engine built from the chunk's tiles is built again from these.
     ///
     /// # Errors
     /// If the chunk is outside the world or the wrong size.
@@ -535,6 +535,7 @@ impl<S: Solver> WorldGenerator<S> {
         self.repaired.remove(&coord);
         self.replays.remove(&coord);
         self.layers.born(coord, None);
+        self.events.push(ChunkEvent::Updated(coord));
         Ok(())
     }
 

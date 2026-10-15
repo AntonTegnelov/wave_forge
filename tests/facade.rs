@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wave_forge::{
-    BatchResult, Builder, ChunkCoord, ChunkEvent, ChunkShape, Domains, FocusPoint, JobId, Prior,
-    Region, RegionBatch, RegionShape, RegionStats, RegionStatus, RepairPolicy, Ruleset,
+    BatchResult, Builder, Chunk, ChunkCoord, ChunkEvent, ChunkShape, Domains, FocusPoint, JobId,
+    Prior, Region, RegionBatch, RegionShape, RegionStats, RegionStatus, RepairPolicy, Ruleset,
     SolveBudget, Solver, SolverError, TileMask, Worker, WorldExtent, WorldGenerator,
 };
 use wfc_core::reference::ReferenceSolver;
@@ -151,6 +151,59 @@ fn a_worker_generates_on_a_thread_of_its_own() {
         let from_worker = worker.chunk(coord).expect("the worker reported it");
         assert_eq!(from_worker.tiles.to_vec(), tiles, "{coord:?}");
     }
+}
+
+/// Tiles a world would never solve, all of the first tile, for a chunk of the test's shape: an
+/// import is taken as it is.
+fn imported(coord: ChunkCoord) -> Chunk {
+    Chunk {
+        coord,
+        tiles: vec![0; CHUNK.cells() as usize].into_boxed_slice(),
+        version: 1,
+    }
+}
+
+#[test]
+fn an_imported_chunk_is_reported_updated_with_the_tiles_it_was_given() {
+    let mut world = world(false);
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the reference solves");
+    let coord = ChunkCoord::new(1, 1, 0);
+
+    world
+        .import(imported(coord))
+        .expect("a chunk of the world's shape");
+    let events = world.wait().expect("nothing in flight");
+
+    assert!(events.contains(&ChunkEvent::Updated(coord)), "{events:?}");
+    assert_eq!(world.chunk(coord), Some(&imported(coord)));
+}
+
+#[test]
+fn a_worker_reports_an_imported_chunk_with_its_tiles() {
+    let mut worker = Worker::spawn(|| Ok(world(false)));
+    worker.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    let coord = ChunkCoord::new(1, 1, 0);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while worker.chunk(coord).is_none() {
+        assert!(Instant::now() < deadline, "{:?}", worker.failure());
+        worker.drain();
+        std::thread::yield_now();
+    }
+
+    worker.import(imported(coord));
+    let mut updated = false;
+    while !updated {
+        assert!(
+            Instant::now() < deadline,
+            "no update: {:?}",
+            worker.failure()
+        );
+        updated = worker.drain().contains(&ChunkEvent::Updated(coord));
+        std::thread::yield_now();
+    }
+
+    assert_eq!(worker.chunk(coord), Some(&imported(coord)));
 }
 
 #[test]
