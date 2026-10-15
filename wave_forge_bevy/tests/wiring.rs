@@ -155,6 +155,19 @@ fn an_imported_chunk_is_reported_updated_and_holds_the_tiles_it_was_given() {
 }
 
 #[test]
+fn a_chunks_hash_is_the_librarys_hash_of_its_tiles() {
+    let mut app = app(1, None);
+
+    run_until_idle(&mut app);
+
+    let world = app.world().resource::<World>();
+    let coord = ChunkCoord::new(0, 0, 0);
+    let chunk = world.chunk(coord).expect("generated");
+    assert_eq!(world.chunk_hash(coord), Some(wave_forge::tiles_hash(chunk)));
+    assert_eq!(world.chunk_hash(ChunkCoord::new(3, 3, 0)), None);
+}
+
+#[test]
 fn a_chunk_that_leaves_every_focus_is_dropped_and_reported() {
     // A margin of one, because the chunks a focus asks for reach one chunk beyond its radius.
     let mut app = app(1, Some(1));

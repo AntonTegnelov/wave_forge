@@ -19,8 +19,9 @@ var world: Node
 var camera: Camera3D
 var wanted: Vector3i
 var arrived := false
-## The tiles imported into the chunk under the camera, once they are.
+## The tiles imported into the chunk under the camera, once they are, and its hash before.
 var imported := PackedInt32Array()
+var hash_before := ""
 var started_usec := 0
 
 func _initialize() -> void:
@@ -66,6 +67,10 @@ func _process(_delta: float) -> bool:
 	if world.tiles_at(wanted) != imported:
 		_fail("chunk %s does not hold the imported tiles" % wanted)
 		return true
+	var hash_after: String = world.chunk_hash(wanted)
+	if hash_after.length() != 16 or hash_after == hash_before:
+		_fail("chunk %s hashed %s before its import and %s after" % [wanted, hash_before, hash_after])
+		return true
 	var cached := DirAccess.get_files_at(CACHE)
 	if cached.is_empty():
 		_fail("no kernels were kept in %s" % CACHE)
@@ -74,7 +79,7 @@ func _process(_delta: float) -> bool:
 	if world.follow_camera:
 		_fail("follow did not turn follow_camera off")
 		return true
-	print("verify_follow: the world generated chunk %s under the camera with no follow, took that chunk's tiles from elsewhere and refused ill-formed ones, kept its kernels in %d file(s), and a script's follow took over" % [wanted, cached.size()])
+	print("verify_follow: the world generated chunk %s under the camera with no follow, took that chunk's tiles from elsewhere and refused ill-formed ones, its hash changing with them, kept its kernels in %d file(s), and a script's follow took over" % [wanted, cached.size()])
 	_clear(CACHE)
 	quit(0)
 	return true
@@ -96,6 +101,10 @@ func _import() -> bool:
 		return true
 	if world.tiles_at(wanted) != own:
 		_fail("a refused import changed chunk %s" % wanted)
+		return true
+	hash_before = world.chunk_hash(wanted)
+	if hash_before.length() != 16 or not world.chunk_hash(Vector3i(99, 99, 0)).is_empty():
+		_fail("chunk %s hashed %s, and an ungenerated one %s" % [wanted, hash_before, world.chunk_hash(Vector3i(99, 99, 0))])
 		return true
 	arrived = false
 	imported = next

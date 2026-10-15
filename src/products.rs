@@ -16,6 +16,21 @@ use crate::space::YUpSpace;
 use std::collections::BTreeMap;
 use wfc_core::{Chunk, ChunkCoord, WorldExtent};
 
+/// A 64-bit hash of a chunk's tiles: FNV-1a over each tile's index as two bytes, little-endian, in
+/// the chunk's cell order, as [`crate::stages::Runtime::product_hash`] hashes a stage's product.
+/// Two machines given the same seed and rule set hash a chunk alike whatever order they generated
+/// it in, so players sharing a world compare it to confirm they agree, and send one another a
+/// chunk whose hash differs (docs/reference/packs.md, "Hashes"). It is for agreeing, not security.
+#[must_use]
+pub fn tiles_hash(chunk: &Chunk) -> u64 {
+    chunk
+        .tiles
+        .iter()
+        .fold(crate::stages::codec::FNV_START, |hash, tile| {
+            crate::stages::codec::fnv(hash, &tile.to_le_bytes())
+        })
+}
+
 /// Which placement an instance is, the same in every run, session and machine: the chunk it
 /// belongs to and a local id within it. A game keys what it attaches to an instance, and saved
 /// edits, by it.

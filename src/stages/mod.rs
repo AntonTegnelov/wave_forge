@@ -5,7 +5,7 @@
 mod assemble;
 pub mod brushes;
 mod caves;
-mod codec;
+pub(crate) mod codec;
 mod connected;
 mod droplets;
 pub mod edits;
