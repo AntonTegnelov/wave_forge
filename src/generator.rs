@@ -115,6 +115,9 @@ pub struct WorldGenerator<S: Solver> {
     /// [`WorldGenerator::poll`] reports.
     store_failure: Option<StoreError>,
     pending: Option<Pending>,
+    /// Chunks imported while `pending` was in flight, which it leaves as they are: an import is
+    /// taken as it is, whatever was solved before it arrived.
+    imported: BTreeSet<ChunkCoord>,
     events: Vec<ChunkEvent>,
     stats: GeneratorStats,
 }
@@ -140,6 +143,7 @@ impl<S: Solver> WorldGenerator<S> {
             not_stored: BTreeSet::new(),
             store_failure: None,
             pending: None,
+            imported: BTreeSet::new(),
             events: Vec::new(),
             stats: GeneratorStats::default(),
         }
@@ -527,10 +531,23 @@ impl<S: Solver> WorldGenerator<S> {
     /// what an engine built from the chunk's tiles is built again from these.
     ///
     /// # Errors
-    /// If the chunk is outside the world or the wrong size.
+    /// If the chunk is outside the world, the wrong size, or holds a tile the rule set does not
+    /// have.
     pub fn import(&mut self, chunk: Chunk) -> Result<(), Error> {
         let coord = chunk.coord;
+        let tiles = self.ruleset.num_tiles();
+        if let Some(&tile) = chunk.tiles.iter().find(|&&tile| u32::from(tile) >= tiles) {
+            return Err(ModelError::UnknownTile {
+                chunk: coord,
+                tile,
+                tiles,
+            }
+            .into());
+        }
         self.store.insert(chunk)?;
+        if self.pending.is_some() {
+            self.imported.insert(coord);
+        }
         self.failed.remove(&coord);
         self.repaired.remove(&coord);
         self.replays.remove(&coord);
@@ -706,7 +723,11 @@ impl<S: Solver> WorldGenerator<S> {
             self.stats.repair_ms += elapsed_ms;
         }
         let cells = pending.regions[0].shape().cells();
+        let imported = std::mem::take(&mut self.imported);
         for (index, (&chunk, region)) in pending.chunks.iter().zip(&pending.regions).enumerate() {
+            if imported.contains(&chunk) {
+                continue;
+            }
             // A repair is one chunk tried with many seeds; the lowest seed that solved is the one
             // kept, so the outcome does not depend on anything but the configuration.
             let solved = if pending.release {
@@ -729,7 +750,7 @@ impl<S: Solver> WorldGenerator<S> {
                 continue;
             };
             let domains = result.region(solved, cells);
-            let touched = self.write(region, &domains, pending.release)?;
+            let touched = self.write(region, &domains, pending.release, &imported)?;
             if pending.replay {
                 self.events
                     .extend(touched.into_iter().map(ChunkEvent::Updated));
@@ -767,6 +788,7 @@ impl<S: Solver> WorldGenerator<S> {
         region: &Region,
         domains: &Domains,
         release: bool,
+        imported: &BTreeSet<ChunkCoord>,
     ) -> Result<Vec<ChunkCoord>, Error> {
         let own = region.chunk();
         let phase = if release {
@@ -781,7 +803,7 @@ impl<S: Solver> WorldGenerator<S> {
                 continue;
             }
             let coord = ChunkCoord::of_cell(at, shape);
-            if !inner && !(release && self.store.contains(coord)) {
+            if (!inner && !(release && self.store.contains(coord))) || imported.contains(&coord) {
                 continue;
             }
             let Some(tile) = domains.decided(index as u32) else {
