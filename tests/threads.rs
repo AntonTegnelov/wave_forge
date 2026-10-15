@@ -13,8 +13,11 @@ fn pack(path: &str) -> Arc<Pack> {
     Arc::new(Pack::parse(&text).expect("a valid pack"))
 }
 
-/// Every chunk's hash over every stage of the pack at `path`, the chunks of `area` asked for at
-/// once, generated on `threads` threads.
+/// Every chunk's hash over every stage of the pack at `path`, generated on `threads` threads: the
+/// first chunk of `area` asked for alone, then the whole area at once. A step shares a stage's
+/// chunks out between threads only once that stage's products have cost something (see
+/// `Runtime::with_threads`), so the first request gives every stage a cost, and the area is
+/// generated on the threads.
 fn hashes(
     path: &str,
     size: [u32; 2],
@@ -25,6 +28,10 @@ fn hashes(
     let stages: Vec<&str> = pack.stage_names().collect();
     let mut runtime = Runtime::new(Arc::clone(&pack), 7, size)
         .with_threads(NonZeroUsize::new(threads).expect("a thread at least"));
+    runtime
+        .request(&[FocusPoint::new(area[0], 0)], &stages)
+        .expect("every stage");
+    runtime.run_until_idle().expect("the stages run");
     let focus: Vec<FocusPoint> = area.iter().map(|&c| FocusPoint::new(c, 0)).collect();
     runtime.request(&focus, &stages).expect("every stage");
     runtime.run_until_idle().expect("the stages run");
