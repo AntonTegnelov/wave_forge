@@ -23,7 +23,8 @@ And M1: the maximal preset's continent baked once ahead of time, headless (measu
 played from what it baked on each graphics API, walking and flying, on Forward+ (measure_playback.gd).
 And P1 on a stage world: a camera walked into the small city preset on each graphics API, on Forward+
 (measure_city_preset.gd); and P2: a camera flown over the hills preset generated live with its far
-ground out to 2 km (measure_view.gd). And M2, once, headless: a new world made from nothing, the
+ground out to 2 km (measure_view.gd); and P6: the islands preset's preview showing a changed
+parameter, its near stages alone and with its far ground (measure_preview.gd). And M2, once, headless: a new world made from nothing, the
 game's history and then the whole continent (examples/new_world/measure.gd).
 
 Everything goes into measurements/<date-time>/ in the repository, and a zip of it next to that
@@ -302,6 +303,14 @@ foreach ($api in $Apis) {
             "--script", "measure_city_preset.gd", "--", "--seconds", $seconds, "--out", (Join-Path $Results "preset.txt"))))
         [void](Invoke-Logged "preset-view-$api" $Godot (@("--path", $GodotProject) + $renderer + @(
             "--script", "measure_view.gd", "--", "--seconds", $seconds, "--out", (Join-Path $Results "preset.txt"))))
+        # P6: the islands preset's preview showing a changed parameter, its near stages alone and
+        # with its far ground.
+        foreach ($mode in @("near", "far")) {
+            $arguments = @("--path", $GodotProject) + $renderer + @("--script", "measure_preview.gd", "--",
+                "--out", (Join-Path $Results "preset.txt"))
+            if ($mode -eq "far") { $arguments += "--far" }
+            [void](Invoke-Logged "preset-preview-$mode-$api" $Godot $arguments)
+        }
     }
     if ($Only -contains "ground") {
         foreach ($script in @("render_ground", "render_lods", "render_far")) {

@@ -715,7 +715,11 @@ them (`tests/presets.rs`), and in the dev container the islands preset's 3×3-ch
 generated again in about 2 ms, per stage in [measurements.md](../research/measurements.md) L33.
 On the reference desktop, with the erosion stages the preset has gained since, a changed `land` or
 `roughness` regenerates the preview in 67 to 72 ms, half of it the `eroded` stage, within the
-200 ms ([measurements.md](../research/measurements.md) D22).
+200 ms ([measurements.md](../research/measurements.md) D22). Shown in Godot, a changed `land` or
+`roughness` drops 1 161 chunks of the near stages, since the erosion the height reads spans far
+beyond the 3 by 3 chunks, and the preview shows it in 206 to 213 ms in the dev container through
+dozen, 501 to 515 ms with the preset's far ground, which the editor's preview of the preset draws
+too (`measure_preview.gd`, E77); the reference desktop's is the desktop script's `preset` part.
 
 ## M: maximal worlds
 
