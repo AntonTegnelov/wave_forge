@@ -30,7 +30,9 @@ chunk beyond its radius). It also converts between spaces: `chunk_at`, `translat
 **Components, resources and messages:**
 
 - `GenerationFocus`, a component: generate around this entity, within its radius.
-- `WaveForgeWorld<S>`, a resource: `chunk(coord)`, `is_idle`, `pending_chunks`, and from a module
+- `WaveForgeWorld<S>`, a resource: `chunk(coord)`, `is_idle`, `pending_chunks`, `import(chunk)`,
+  which puts a chunk's tiles in place of what was generated there, another peer's say, and the next
+  frame reports it as `ChunkUpdated`, and from a module
   set's `surface`, `indoor` and `sounds` ([godot.md](godot.md#sound-and-surfaces) has what they
   mean): `surface_at(translation, tiles)`, what walkers stand on at a point, for footsteps, and
   `region_tags(coord, tiles)`, a chunk's `interiors` (boxes of indoor cells) and `emitters` (sounds

@@ -71,7 +71,12 @@ extension needs none of godot-rust's thread-safety features.
 - **Streaming:** `follow(position)` asks for the chunks around a position in Godot's world space;
   `generated_chunks()`.
 - **Tiles:** `tiles_at(chunk)`, `tile_count()`, `tile_name(tile)`, `tile_rotation(tile)`,
-  `tile_basis(tile)`, `tiles_named(name)`, `tiles_tagged(tag)`.
+  `tile_basis(tile)`, `tiles_named(name)`, `tiles_tagged(tag)`. `import_tiles(chunk, tiles)` puts
+  tiles in `tiles_at`'s order in place of a chunk's own, taken as they are: another peer's when two
+  disagree about the chunk's hash, or a chunk the game kept. `chunk_updated` then fires for it, and
+  its bodies, navigation, proxies, occluders and sound are built again from them; tiles of another
+  count than a chunk's cells, a tile the rule set lacks, a chunk outside the world and a node that
+  has not started are refused with an error and change nothing.
 - **Space:** `chunk_at(position)`, `position_of(chunk)`, `cell_position(chunk, cell)`,
   `chunk_size()`.
 - **Drawing:** `instance_sets(chunk, names)` gives one dictionary per module with its `name`, its

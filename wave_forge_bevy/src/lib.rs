@@ -219,6 +219,17 @@ impl<S: Solver + Send + Sync + 'static> WaveForgeWorld<S> {
         self.generator.chunk(coord)
     }
 
+    /// Puts a chunk's tiles in place of what was generated there: another peer's when two
+    /// disagree about the chunk's hash, or a chunk the game kept. They are taken as they are, and
+    /// the next frame reports the chunk as [`ChunkUpdated`], so what a game built from it is built
+    /// again ([`wave_forge::WorldGenerator::import`]).
+    ///
+    /// # Errors
+    /// If the chunk is outside the world or not a chunk's size.
+    pub fn import(&mut self, chunk: Chunk) -> Result<(), wave_forge::Error> {
+        self.generator.import(chunk)
+    }
+
     /// A generated chunk's rooms and sounds in Bevy's world space, from a module set's `indoor`
     /// and `sounds` ([`wave_forge::region_tags`]), or `None` if it has not been generated.
     #[must_use]

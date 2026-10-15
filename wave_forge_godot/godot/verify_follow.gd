@@ -1,11 +1,12 @@
 ## Starts a WaveForgeWorld beside a camera and never calls follow, and checks it generates around the
-## camera, keeps its compiled kernels where `kernel_cache` says, and stops following once a script
-## calls follow.
+## camera, takes a chunk's tiles from elsewhere, keeps its compiled kernels where `kernel_cache`
+## says, and stops following once a script calls follow.
 ##
 ## Run by `../verify.sh` after `verify.gd`. A world in a scene with a Camera3D generates the chunk the
-## camera stands over with no code, as `follow_camera` promises; the kernels it compiled are in the
-## cache directory afterwards; and a call to `follow` turns `follow_camera` off, so the script
-## follows from then on.
+## camera stands over with no code, as `follow_camera` promises; tiles imported into that chunk,
+## another peer's say, replace its own and fire `chunk_updated`, while tiles of the wrong count or a
+## tile the rule set lacks are refused; the kernels it compiled are in the cache directory
+## afterwards; and a call to `follow` turns `follow_camera` off, so the script follows from then on.
 extends SceneTree
 
 const CELLS := 8
@@ -18,6 +19,8 @@ var world: Node
 var camera: Camera3D
 var wanted: Vector3i
 var arrived := false
+## The tiles imported into the chunk under the camera, once they are.
+var imported := PackedInt32Array()
 var started_usec := 0
 
 func _initialize() -> void:
@@ -58,6 +61,11 @@ func _process(_delta: float) -> bool:
 		return true
 	if not arrived:
 		return false
+	if imported.is_empty():
+		return _import()
+	if world.tiles_at(wanted) != imported:
+		_fail("chunk %s does not hold the imported tiles" % wanted)
+		return true
 	var cached := DirAccess.get_files_at(CACHE)
 	if cached.is_empty():
 		_fail("no kernels were kept in %s" % CACHE)
@@ -66,10 +74,35 @@ func _process(_delta: float) -> bool:
 	if world.follow_camera:
 		_fail("follow did not turn follow_camera off")
 		return true
-	print("verify_follow: the world generated chunk %s under the camera with no follow, kept its kernels in %d file(s), and a script's follow took over" % [wanted, cached.size()])
+	print("verify_follow: the world generated chunk %s under the camera with no follow, took that chunk's tiles from elsewhere and refused ill-formed ones, kept its kernels in %d file(s), and a script's follow took over" % [wanted, cached.size()])
 	_clear(CACHE)
 	quit(0)
 	return true
+
+## Imports into the chunk under the camera every one of its tiles turned into the next of the rule
+## set, after two ill-formed imports that must be refused; returns whether the check is over.
+func _import() -> bool:
+	var own: PackedInt32Array = world.tiles_at(wanted)
+	var count: int = world.tile_count()
+	var next := PackedInt32Array()
+	for tile in own:
+		next.append((tile + 1) % count)
+	var short := next.duplicate()
+	short.remove_at(0)
+	var unknown := next.duplicate()
+	unknown[0] = count
+	if world.import_tiles(wanted, short) or world.import_tiles(wanted, unknown):
+		_fail("tiles of the wrong count or a tile the rule set lacks were taken")
+		return true
+	if world.tiles_at(wanted) != own:
+		_fail("a refused import changed chunk %s" % wanted)
+		return true
+	arrived = false
+	imported = next
+	if not world.import_tiles(wanted, imported):
+		_fail("the imported tiles were refused")
+		return true
+	return false
 
 func _on_chunk_updated(chunk: Vector3i) -> void:
 	if chunk == wanted:

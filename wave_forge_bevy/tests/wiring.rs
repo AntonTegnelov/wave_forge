@@ -12,7 +12,7 @@ use bevy_math::Vec3;
 use bevy_transform::components::GlobalTransform;
 use std::sync::Arc;
 use wave_forge::loader::load_rule_file;
-use wave_forge::{ChunkCoord, ChunkShape, Prior, Ruleset, WorldExtent};
+use wave_forge::{Chunk, ChunkCoord, ChunkShape, Prior, Ruleset, WorldExtent};
 use wave_forge_bevy::{
     ChunkEvicted, ChunkFailed, ChunkUpdated, GenerationFocus, WaveForgeSettings,
     WaveForgeSolverPlugin, WaveForgeSystems, WaveForgeTiles, WaveForgeWorld,
@@ -127,6 +127,31 @@ fn a_focus_entity_makes_the_world_generate_around_it() {
     assert!(world.chunk(ChunkCoord::new(0, 0, 0)).is_some());
     assert_eq!(world.stats().solved, 6);
     assert!(frames > 1, "one batch per frame, so this takes several");
+}
+
+#[test]
+fn an_imported_chunk_is_reported_updated_and_holds_the_tiles_it_was_given() {
+    let mut app = app(1, None);
+    run_until_idle(&mut app);
+    let coord = ChunkCoord::new(0, 0, 0);
+    let imported = Chunk {
+        coord,
+        tiles: vec![1; CHUNK.cells() as usize].into_boxed_slice(),
+        version: 2,
+    };
+    app.world_mut().resource_mut::<Seen>().updated.clear();
+
+    app.world_mut()
+        .resource_mut::<World>()
+        .import(imported.clone())
+        .expect("a chunk of the world");
+    app.update();
+
+    assert_eq!(app.world().resource::<Seen>().updated, vec![coord]);
+    assert_eq!(
+        app.world().resource::<World>().chunk(coord),
+        Some(&imported)
+    );
 }
 
 #[test]
