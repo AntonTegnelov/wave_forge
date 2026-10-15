@@ -58,6 +58,12 @@ pub enum ModelError {
     /// A chunk with the wrong number of cells.
     #[error("a chunk of this world holds {expected} cells, but {got} were given")]
     ChunkCells { expected: usize, got: usize },
+    #[error("chunk ({}, {}, {}) holds tile {tile}, but the rule set has {tiles}", chunk.x, chunk.y, chunk.z)]
+    UnknownTile {
+        chunk: crate::chunk::ChunkCoord,
+        tile: u16,
+        tiles: u32,
+    },
     /// A cell that should have been decided by now.
     #[error("cell ({}, {}, {}) is not decided", cell[0], cell[1], cell[2])]
     Undecided { cell: crate::chunk::WorldCell },

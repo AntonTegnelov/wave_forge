@@ -180,6 +180,40 @@ fn an_imported_chunk_is_reported_updated_with_the_tiles_it_was_given() {
 }
 
 #[test]
+fn an_import_holding_a_tile_the_rule_set_lacks_is_refused_and_changes_nothing() {
+    let mut world = world(false);
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the reference solves");
+    let coord = ChunkCoord::new(1, 1, 0);
+    let before = world.chunk(coord).cloned();
+    let mut unknown = imported(coord);
+    unknown.tiles[0] = TILES as u16;
+
+    let refused = world.import(unknown);
+
+    assert!(
+        refused.is_err(),
+        "a tile beyond the rule set's {TILES} was taken"
+    );
+    assert_eq!(world.chunk(coord).cloned(), before);
+}
+
+#[test]
+fn an_import_made_while_a_batch_covering_its_chunk_is_in_flight_is_kept() {
+    let mut world = world(false);
+    let coord = ChunkCoord::new(0, 0, 0);
+    world.request(&[FocusPoint::new(coord, 0)]);
+    world.tick().expect("a batch starts");
+
+    world
+        .import(imported(coord))
+        .expect("a chunk of the world's shape");
+    world.wait().expect("the batch finishes");
+
+    assert_eq!(world.chunk(coord), Some(&imported(coord)));
+}
+
+#[test]
 fn a_worker_reports_an_imported_chunk_with_its_tiles() {
     let mut worker = Worker::spawn(|| Ok(world(false)));
     worker.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);

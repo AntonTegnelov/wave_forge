@@ -631,7 +631,6 @@ pub struct Painting {
     pub pixels: Vec<[u8; 4]>,
 }
 
-/// A region a Region stage's job accepted: its curves, and why each attempt before was rejected.
 /// `f` of every item, in the items' order, worked out on up to `threads` threads at once, each
 /// taking the next item no thread has taken, so a dear item holds up no other. A panic in `f` is
 /// passed on as it was.
@@ -689,6 +688,7 @@ struct Pending {
     ms: f64,
 }
 
+/// A region a Region stage's job accepted: its curves, and why each attempt before was rejected.
 struct ComputedRegion {
     curves: Arc<[Curve]>,
     rejected: Vec<String>,
