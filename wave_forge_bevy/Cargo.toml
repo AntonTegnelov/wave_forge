@@ -61,9 +61,10 @@ bevy = { version = "0.20.0", default-features = false, features = [
 ] }
 # A device made the way Bevy makes one, for the shared-device test.
 pollster = "1.0.1"
-# The sound and names example's audio crate: spatial sound on the tracked Bevy version. `wav` only
-# because the crate does not build without a file format; the example makes its sounds in code.
-bevy_kira_audio = { version = "0.27.1", default-features = false, features = ["wav"] }
+# The sound and names example's audio crate: spatial sound on the tracked Bevy version. `spatial`
+# for its emitters and receiver, and `wav` only because the crate does not build without a file
+# format; the example makes its sounds in code.
+bevy_kira_audio = { version = "0.27.1", default-features = false, features = ["spatial", "wav"] }
 # The sound and names example's localisation, in its thread-safe form so a bundle can be a resource.
 fluent = "0.17.0"
 wgpu = { version = "30.0.1", features = ["dx12", "metal", "vulkan", "wgsl"] }
