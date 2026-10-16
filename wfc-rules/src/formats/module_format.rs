@@ -132,6 +132,43 @@ const fn yes() -> bool {
     true
 }
 
+/// A module's faces by the names its file gives them: what a model drawn for the module has to meet
+/// ([`crate::kit_check`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleFaces {
+    pub name: String,
+    /// Faces along `+x`, `-x`, `+y` and `-y` of the lattice, which a Y-up model's `+X`, `-X`, `+Z`
+    /// and `-Z` sides are.
+    pub sides: [String; 4],
+    pub up: String,
+    pub down: String,
+}
+
+/// Every module of a module set file with its faces' names, in the file's order.
+///
+/// # Errors
+/// What [`parse_module_set`] refuses.
+pub fn module_faces(content: &str) -> Result<Vec<ModuleFaces>, LoadError> {
+    parse_module_set(content)?;
+    let file: ModuleFile = ron::Options::default()
+        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+        .from_str(content)
+        .map_err(|error| LoadError::ParseError(format!("module set: {error}")))?;
+    Ok(file
+        .modules
+        .into_iter()
+        .map(|module| ModuleFaces {
+            sides: module
+                .sides
+                .try_into()
+                .expect("a module set that parses gives each module four sides"),
+            name: module.name,
+            up: module.up,
+            down: module.down,
+        })
+        .collect())
+}
+
 /// Parses a module set file.
 ///
 /// # Errors

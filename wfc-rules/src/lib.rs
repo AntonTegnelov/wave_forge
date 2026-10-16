@@ -7,6 +7,7 @@ pub mod formats;
 /// Contains logic for generating expanded rules based on symmetry.
 pub mod generator;
 pub mod import;
+pub mod kit_check;
 /// Contains the main rule loading functions.
 pub mod loader;
 pub mod modules;
