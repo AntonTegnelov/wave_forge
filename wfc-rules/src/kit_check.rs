@@ -5,10 +5,11 @@
 //!
 //! The checks are the ones a bad model breaks a whole town with:
 //! - it stays inside its cell, but for a stair, whose flight rises into the empty cell above;
-//! - every walkable side (ground, a road, a walkway deck, a balcony) has a surface at
+//! - every side whose face is walkable (ground, a road, a walkway deck) has a surface at
 //!   [`WALK_HEIGHT`] just inside it, where its neighbour's surface meets it;
 //! - nothing touches a side that faces air, but for a roof's foot, which covers the cell's
-//!   footprint at the bottom of a roof standing on a building.
+//!   footprint at the bottom of a roof standing on a building, and a stair's flight, which reaches
+//!   its `+X` side where it climbs on into the cell above.
 
 pub use crate::formats::module_format::{ModuleFaces, module_faces};
 use std::fmt;
@@ -26,18 +27,9 @@ const BOUNDS_TOLERANCE: f32 = 0.01;
 const STAIR_TOP: f32 = 1.0;
 /// How far inside a side that faces air a model keeps.
 const AIR_CLEARANCE: f32 = 0.02;
-/// Up to how high a roof standing on a building may reach its sides: its foot.
-const ROOF_FOOT: f32 = -0.44;
-
-/// Side faces a walker crosses, whose surface lies at [`WALK_HEIGHT`].
-const WALKABLE: [&str; 6] = [
-    "ground",
-    "ground_path",
-    "blocked",
-    "road",
-    "walkway",
-    "balcony",
-];
+/// Up to how high a roof standing on a building may reach its sides: its foot, at most a quarter
+/// of the cell thick.
+const ROOF_FOOT: f32 = -0.25 + BOUNDS_TOLERANCE;
 
 /// The sides of a model's cell, in the module file's order.
 const SIDES: [(&str, usize, f32); 4] = [
@@ -102,8 +94,8 @@ pub fn check_model(faces: &ModuleFaces, triangles: &[[f32; 3]]) -> Vec<ModelProb
     {
         problems.push(ModelProblem::OutsideCell { vertex });
     }
-    for ((side, axis, sign), face) in SIDES.iter().zip(&faces.sides) {
-        if WALKABLE.contains(&face.as_str()) {
+    for (index, (side, axis, sign)) in SIDES.iter().enumerate() {
+        if faces.walkable[index] {
             let mut at = [0.0, 0.0];
             at[usize::from(*axis == 2)] = sign * (0.5 - WALK_INSET);
             let mut heights = heights_at(triangles, at);
@@ -118,7 +110,8 @@ pub fn check_model(faces: &ModuleFaces, triangles: &[[f32; 3]]) -> Vec<ModelProb
                 });
             }
         }
-        if face == "air" {
+        let climbs_on = faces.up == "stair" && index == 0;
+        if faces.sides[index] == "air" && !climbs_on {
             let roof = faces.down == "solid";
             if let Some(&vertex) = triangles
                 .iter()

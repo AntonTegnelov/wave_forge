@@ -140,6 +140,8 @@ pub struct ModuleFaces {
     /// Faces along `+x`, `-x`, `+y` and `-y` of the lattice, which a Y-up model's `+X`, `-X`, `+Z`
     /// and `-Z` sides are.
     pub sides: [String; 4],
+    /// Whether walkers cross each side, as its face says.
+    pub walkable: [bool; 4],
     pub up: String,
     pub down: String,
 }
@@ -154,17 +156,25 @@ pub fn module_faces(content: &str) -> Result<Vec<ModuleFaces>, LoadError> {
         .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
         .from_str(content)
         .map_err(|error| LoadError::ParseError(format!("module set: {error}")))?;
+    let walkable = |face: &String| {
+        matches!(
+            file.faces.get(face),
+            Some(FaceDef::Side { walkable: true, .. })
+        )
+    };
     Ok(file
         .modules
-        .into_iter()
+        .iter()
         .map(|module| ModuleFaces {
             sides: module
                 .sides
+                .clone()
                 .try_into()
                 .expect("a module set that parses gives each module four sides"),
-            name: module.name,
-            up: module.up,
-            down: module.down,
+            walkable: std::array::from_fn(|side| walkable(&module.sides[side])),
+            name: module.name.clone(),
+            up: module.up.clone(),
+            down: module.down.clone(),
         })
         .collect())
 }

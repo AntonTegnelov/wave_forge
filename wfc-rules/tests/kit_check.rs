@@ -10,6 +10,7 @@ const SET: &str = r#"(
         "air": Side(connector: "air"),
         "ground": Side(connector: "ground", walkable: true),
         "road": Side(connector: "road", walkable: true),
+        "blocked": Side(connector: "ground"),
         "wall": Side(connector: "building"),
         "open": Top(connector: "open"),
         "solid": Top(connector: "solid"),
@@ -22,7 +23,8 @@ const SET: &str = r#"(
         (name: "lane", sides: ["road", "road", "ground", "ground"], up: "open", down: "bedrock"),
         (name: "roof", sides: ["air", "air", "air", "air"], up: "open", down: "solid"),
         (name: "lamp", sides: ["air", "air", "air", "air"], up: "open", down: "open"),
-        (name: "stairs", sides: ["ground", "wall", "wall", "wall"], up: "stair", down: "bedrock"),
+        (name: "stairs", sides: ["blocked", "ground", "wall", "wall"], up: "stair", down: "bedrock"),
+        (name: "upper_stairs", sides: ["air", "ground", "wall", "wall"], up: "stair", down: "open"),
     ],
 )"#;
 
@@ -143,6 +145,24 @@ fn a_stair_may_rise_into_the_cell_above() {
 }
 
 #[test]
+fn a_side_that_is_not_walkable_needs_no_walking_surface() {
+    // The slab stops where the flight's solid block begins, so the blocked +X side has no
+    // surface at the walking height.
+    let mut model = cuboid([-0.5, -0.5, -0.5], [0.2, -0.25, 0.5]);
+    model.extend(cuboid([0.2, -0.5, -0.5], [0.5, 0.75, 0.5]));
+
+    assert_eq!(problems("stairs", &model), Vec::new());
+}
+
+#[test]
+fn a_stairs_flight_may_reach_its_plus_x_side_where_it_climbs_on() {
+    let mut model = cuboid([-0.5, -0.5, -0.5], [0.0, -0.25, 0.5]);
+    model.extend(cuboid([-0.25, -0.25, -0.25], [0.5, 0.75, 0.25]));
+
+    assert_eq!(problems("upper_stairs", &model), Vec::new());
+}
+
+#[test]
 fn something_touching_a_side_that_faces_air_is_refused() {
     let model = cuboid([-0.1, -0.5, -0.1], [0.5, 0.3, 0.1]);
 
@@ -156,10 +176,23 @@ fn something_touching_a_side_that_faces_air_is_refused() {
 
 #[test]
 fn a_roof_may_cover_its_whole_footprint_at_its_foot() {
-    let mut model = cuboid([-0.5, -0.5, -0.5], [0.5, -0.45, 0.5]);
-    model.extend(cuboid([-0.3, -0.45, -0.3], [0.3, 0.3, 0.3]));
+    let mut model = cuboid([-0.5, -0.5, -0.5], [0.5, -0.25, 0.5]);
+    model.extend(cuboid([-0.3, -0.25, -0.3], [0.3, 0.3, 0.3]));
 
     assert_eq!(problems("roof", &model), Vec::new());
+}
+
+#[test]
+fn a_roof_reaching_its_side_above_its_foot_is_refused() {
+    let mut model = cuboid([-0.5, -0.5, -0.5], [0.5, -0.25, 0.5]);
+    model.extend(cuboid([-0.3, -0.25, -0.3], [0.5, 0.3, 0.3]));
+
+    let found = problems("roof", &model);
+
+    assert!(
+        matches!(found.as_slice(), [ModelProblem::TouchesAir { side, .. }] if side == "+X"),
+        "{found:?}"
+    );
 }
 
 #[test]
