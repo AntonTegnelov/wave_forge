@@ -153,7 +153,7 @@ both engines.
 | NavSource | `NavigationMeshSourceGeometryData3D`, baked with `NavigationServer3D.bake_from_source_geometry_data_async` | bevy_rerecast |
 | Occluders | `OccluderInstance3D` with `ArrayOccluder3D` or `BoxOccluder3D` | not needed; Bevy's occlusion culling works from the depth buffer |
 | RegionTags | `Area3D` reverb and bus zones, pooled `AudioStreamPlayer3D`, `tr()` with a context | audio zones through bevy_seedling or bevy_kira_audio, bevy_fluent |
-| Splines | a road mesh or splat writes; decals on Forward+ and Mobile only | meshes or clustered decals |
+| Splines | a road mesh or splat writes; decals along curves, on Compatibility from Godot 4.8 | meshes or clustered decals |
 | SpawnPoints | a user `PackedScene`, preloaded with `ResourceLoader.load_threaded_request` | an entity event to a user binding (a glTF scene or a scene function) |
 | ChunkHash | multiplayer agreement and golden checks | the same |
 
@@ -259,7 +259,7 @@ grass and a forest cannot share one approach.
 | **Modular buildings (WFC)** | Near: one shared mesh per prototype and rotation, one InstanceSet per chunk and prototype. Far: a merged ProxyMesh with its own level-of-detail lists, swapped by visibility range. The library emits conservative occluders from solid cells, and colliders from the per-prototype shape library. | instancing, `OccluderInstance3D`, Bevy multi-draw indirect and occlusion culling, SDFGI (`STATIC`) |
 | **Detailed interiors** | Nested SpawnPoints and InstanceSets gated to a near ring, with full physics only there. VoxelGI as an opt-in per bounded structure. | rigid bodies, VoxelGI (opt-in) |
 | **Interactables** | SpawnPoints promoted to user scenes inside a radius, pooled when their chunk is evicted, and persisted as changes keyed by stable id (the pattern of Unreal's Instanced Actors and godot_voxel's persistent items). | `ResourceLoader`, `MultiplayerSpawner` |
-| **Water, roads, decals** | Splines feed the stages that read them (flattening, splat, keeping scatter off roads), and the engine draws meshes or splat. Decals need Forward+ or Mobile, so Compatibility gets a mesh or splat path. Water is a sea level plus water tiles, drawn by an engine shader. | decals (optional), fog volumes (Forward+) |
+| **Water, roads, decals** | Splines feed the stages that read them (flattening, splat, keeping scatter off roads), and the engine draws meshes, splat or decals. Godot's Compatibility renderer draws decals from 4.8 ([godotengine/godot#118070](https://github.com/godotengine/godot/pull/118070)); the node lays them along curves ([godot.md](../reference/godot.md#road-decals)). Water is a sea level plus water tiles, drawn by an engine shader. | decals (optional), fog volumes (Forward+) |
 
 ### The Godot features that were asked about, with Bevy's counterparts
 
@@ -455,8 +455,9 @@ engines make that impossible or pointless:
 4. **Reference shaders are written twice**, in Godot's shading language and in WESL.
 5. **Asset binding differs**: a `PackedScene` in Godot, a glTF or code-defined scene in Bevy.
 6. **Godot has a node mode and a server mode**; Bevy has one entity path.
-7. **Godot has renderer tiers.** Compatibility has no compute, decals, SDFGI or texture streaming,
-   so every Godot feature needs a Compatibility path or a documented absence.
+7. **Godot has renderer tiers.** Compatibility has no compute, SDFGI or texture streaming, and
+   decals only from Godot 4.8, so every Godot feature needs a Compatibility path or a documented
+   absence.
 8. **Bevy's physics, navigation, audio and localisation come from third-party crates**, which today
    target Bevy 0.19; Godot has them built in. The integration tracks Bevy 0.20 for device sharing,
    so the adapter crates wait until those crates move.

@@ -231,6 +231,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Occlusion | `occluder_radius` | chunks around the followed position whose towns get occluders of their solid cells, for Godot's occlusion culling; below zero, none (the default) |
 | Audio | `audio_radius` | chunks around the followed position that play the terrain's sounds, the pack's ambience ([packs.md](packs.md#ambience)): each chunk with ground gets an `AudioStreamPlayer3D` per emitter whose key `sounds` maps to a stream, at the emitter's position and volume, from a pool as the world node's are ([Sound and surfaces](#sound-and-surfaces)); below zero, none (the default). `ambience(chunk)` gives a chunk's emitters, a dictionary each with its `position`, `key` and `volume`, for a game that maps them itself |
 | | `sounds` | the stream each sound key plays: `water_river` and `water_lake` for the continent's rivers and lakes |
+| Decals | `curve_decals` | a Region, Rivers, Network or TableCurves stage to a scene whose root is a `Decal`, laid along its curves on the ground ([Road decals](#road-decals)) |
+| | `decal_radius` | chunks around the followed position that get their curves' decals; below zero, none (default 2) |
 | Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, an Assemble piece's or Cave room's name, or a Solve stage's module) to a `PackedScene` or a path to one, or an array of them, its variants ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
@@ -567,8 +569,10 @@ Paint and each brush have a shortcut under `wave_forge/` in the editor settings,
 rebinds there: P toggles Paint, and 1 to 6 pick Raise, Lower, Smooth, Dig, Fill and Remove, while
 the 3D viewport has focus and a `WaveForgeStages` node is selected.
 
-With Paint on and the node selected, a drag in the 3D viewport paints a stroke along the ground,
-as one undo action that restores `edits_text`. The ground comes from `ground_height`, so painting
+With Paint on and the node selected, a ring on the ground under the mouse shows how far the brush
+reaches (`addons/wave_forge/brush_cursor.gd`, a `Decal`), and a drag in the 3D viewport paints a
+stroke along the ground, as one undo action that restores `edits_text`. The ring draws on every
+renderer from Godot 4.8, and on Forward+ and Mobile before it. The ground comes from `ground_height`, so painting
 needs `ground_stage`. What a stroke does is the node's own `paint(brush, path)`:
 - `brush` is a Dictionary with `brush` (`"raise"`, `"smooth"`, `"dig"`, `"fill"` or `"remove"`),
   `stage` or `stages`, `radius` in cells, and `strength` for raise and smooth;
@@ -693,6 +697,25 @@ spent, so a frame can go over by one chunk's placing. Everything a chunk placed 
 chunk is dropped; a point removed by an edit is gone from its chunk, so its scene is never placed
 again. Every chunk the stages hold is placed, those generated beyond the view for a stage that reads
 them included.
+
+### Road decals
+
+`curve_decals` lays a decal along the curves of a Region, Rivers, Network or TableCurves stage,
+roads say: a stage name to a scene whose root is a `Decal`. Each curve is cut into pieces from its
+start, each as long as the curve is wide where it begins, its values being its radius in cells as an
+Apply stage reads them, so a square texture stays square (`wave_forge::decals::curve_decals`). Every
+piece gets an instance of the scene, turned along the curve, as wide as the piece (`size.z`) and a
+fiftieth longer (`size.x`), standing on the ground of `ground_stage` at its middle: a texture
+filtered at a decal's very end fades toward its border, so neighbours overlap by a hair rather
+than leave a hairline between them. The scene's own
+`Decal` keeps its textures, modulate, fades and projection depth (`size.y`), so the depth is what
+covers a road climbing or falling within a piece. A chunk keeps the pieces whose middle stands in
+it, so neighbouring chunks meet without a gap or a doubled decal, and the chunks with ground within
+`decal_radius` of the followed position get theirs, a few a frame, nearest first.
+
+`start` refuses a stage that makes no curves, one that is not a target, and decals with no
+`ground_stage` to stand on. Decals draw on every renderer from Godot 4.8 and on Forward+ and Mobile
+before it; the extension's minimum stays 4.7.
 
 ### Global illumination
 

@@ -5,6 +5,7 @@
 ## takes every tree near its path once the chunks come back, a raise stroke then lifts the ground
 ## on its path by its strength at once, and `edits_text` holds both; a second node given that text
 ## before it starts has the raised ground from its start. A brush that names no brush is refused.
+## The editor's brush cursor rings as much ground as its brush reaches, and hides off the ground.
 extends SceneTree
 
 const CELLS := 8
@@ -20,6 +21,8 @@ var ready := {}
 var started_usec := 0
 var phase := "arrive"
 var ground_before := 0.0
+## Whether the brush cursor has been checked, on the first frame, once the tree is running.
+var cursor_checked := false
 
 func _initialize() -> void:
 	world = _world()
@@ -29,6 +32,24 @@ func _initialize() -> void:
 		return
 	world.follow(Vector3(8, 0, 8))
 	started_usec = Time.get_ticks_usec()
+
+## The cursor shown for a brush of 3 cells over PROBE is centred there, 3 cells either way, deep
+## enough to lie on steep ground, and hidden when the mouse is off the ground.
+func _check_cursor() -> bool:
+	var cursor: Decal = preload("res://addons/wave_forge/brush_cursor.gd").new()
+	root.add_child(cursor)
+	cursor.show_at(PROBE, 3.0, CELL)
+	var reach := 3.0 * CELL.x
+	var placed := cursor.visible and cursor.global_position == PROBE
+	var sized := cursor.size.x == 2.0 * reach and cursor.size.z == 2.0 * reach and cursor.size.y >= 2.0 * reach
+	cursor.show_at(null, 3.0, CELL)
+	var hidden := not cursor.visible
+	cursor.free()
+	if not (placed and sized and hidden):
+		_fail("the brush cursor was placed %s, sized %s, hidden %s" % [placed, sized, hidden])
+		return false
+	print("verify_paint: the brush cursor rings the ground a brush reaches, and hides off the ground")
+	return true
 
 func _world() -> Node:
 	var node: Node = ClassDB.instantiate("WaveForgeStages")
@@ -59,6 +80,10 @@ func _trees_near(radius: float) -> int:
 	return count
 
 func _process(_delta: float) -> bool:
+	if phase == "arrive" and not cursor_checked:
+		cursor_checked = true
+		if not _check_cursor():
+			return true
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
 		_fail("the %s phase timed out" % phase)
 		return true
