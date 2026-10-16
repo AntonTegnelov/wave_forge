@@ -13,30 +13,30 @@ description = "Wave Forge as a Bevy plugin: chunks generated around a focus, on 
 [dependencies]
 # The sub-crates the plugin needs, rather than the `bevy` facade, so a game that does not render
 # still builds it. They are released in lockstep, so a game on the same Bevy version matches.
-bevy_app = "0.20.0-rc.1"
+bevy_app = "0.20.0"
 # The mesh type and its asset usages, for a chunk's ground; bevy_render already depends on both.
-bevy_asset = "0.20.0-rc.1"
-bevy_ecs = "0.20.0-rc.1"
-bevy_math = "0.20.0-rc.1"
-bevy_mesh = "0.20.0-rc.1"
+bevy_asset = "0.20.0"
+bevy_ecs = "0.20.0"
+bevy_math = "0.20.0"
+bevy_mesh = "0.20.0"
 # The materials of the ground, grass and swaying plants, which are PBR materials with shaders of our
 # own.
-bevy_pbr = "0.20.0-rc.1"
+bevy_pbr = "0.20.0"
 # The types those materials are made of: colours, images, reflection for assets, shader paths, and
 # the bounds of grass, which its shader moves away from its mesh.
-bevy_camera = "0.20.0-rc.1"
-bevy_color = "0.20.0-rc.1"
-bevy_image = "0.20.0-rc.1"
-bevy_reflect = "0.20.0-rc.1"
-bevy_shader = "0.20.0-rc.1"
-bevy_render = "0.20.0-rc.1"
-bevy_transform = "0.20.0-rc.1"
+bevy_camera = "0.20.0"
+bevy_color = "0.20.0"
+bevy_image = "0.20.0"
+bevy_reflect = "0.20.0"
+bevy_shader = "0.20.0"
+bevy_render = "0.20.0"
+bevy_transform = "0.20.0"
 # For the warning that a world draws with no sun: Bevy's own crates, already built through bevy_pbr.
-bevy_light = "0.20.0-rc.1"
-bevy_log = "0.20.0-rc.1"
+bevy_light = "0.20.0"
+bevy_log = "0.20.0"
 # The alpha mode of the water's blended material, which bevy_pbr's materials take from it; already
 # built through bevy_pbr.
-bevy_material = "0.20.0-rc.1"
+bevy_material = "0.20.0"
 # With `Reflect` on its noise configuration, so a game edits it as its own components.
 wave_forge = { path = "..", features = ["bevy_reflect"] }
 # The types Bevy's device and queue are, handed straight to `Builder::build_on`. Declaring it is
@@ -52,7 +52,7 @@ wfc-devtools = { path = "../wfc-devtools" }
 # the reference materials. Headless: no windowing feature, so `DefaultPlugins` brings no winit and
 # the app runs without a display. Its log shows a shader's or a pipeline's errors, which the tests
 # would otherwise fail on without saying why.
-bevy = { version = "0.20.0-rc.1", default-features = false, features = [
+bevy = { version = "0.20.0", default-features = false, features = [
     "bevy_render",
     "bevy_asset",
     "bevy_pbr",
@@ -63,7 +63,7 @@ bevy = { version = "0.20.0-rc.1", default-features = false, features = [
 pollster = "1.0.1"
 # The sound and names example's audio crate: spatial sound on the tracked Bevy version. `wav` only
 # because the crate does not build without a file format; the example makes its sounds in code.
-bevy_kira_audio = { version = "=0.27.0-rc.1", default-features = false, features = ["wav"] }
+bevy_kira_audio = { version = "0.27.1", default-features = false, features = ["wav"] }
 # The sound and names example's localisation, in its thread-safe form so a bundle can be a resource.
 fluent = "0.17.0"
 wgpu = { version = "30.0.1", features = ["dx12", "metal", "vulkan", "wgsl"] }
