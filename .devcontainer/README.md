@@ -16,12 +16,16 @@ port 2239** (see the template's port table for the full allocation).
 | gh | GitHub CLI (authenticate with the repo-scoped PAT: `gh auth login --with-token`) |
 | sshd | hardened: pubkey-only, no root, `dev` user only, host port **2239** |
 
-The repo is bind-mounted at `/workspaces/wave_forge`, so edits sync both ways.
+The repo is bind-mounted at `/workspaces/wave_forge` from a checkout in a WSL2
+distro's own filesystem (for example `~/code/wave_forge` in Ubuntu, with Docker
+Desktop's WSL integration enabled for that distro). Never run it from a Windows
+drive: Docker Desktop shares those over 9p, which fails reads and writes with
+`Cannot allocate memory (os error 12)` under load, leaves 0-byte files and
+breaks `git fetch`. From Windows the checkout is at
+`\\wsl.localhost\Ubuntu\home\<user>\code\wave_forge`.
 
-**`target/` is a named volume inside the container.** It masks the Windows
-`target/` from the bind mount (wrong-platform artifacts, and a bind-mounted
-build dir is slow) and survives container recreates. Host and container each
-keep their own build output.
+**`target/` is a named volume inside the container.** It keeps build output
+off the bind mount and survives container recreates.
 
 **Named volumes** (survive recreates, including Zed's dev-container flow):
 `target/`, `~/.cargo` (`CARGO_HOME`: registry/git caches, `cargo install`ed
@@ -33,8 +37,8 @@ rebuild. Bump the toolchain in both the Dockerfile and
 `rust-toolchain.toml`.
 
 Only the main checkout's `target/` is on a volume. A git worktree (for
-example under `.claude/worktrees/`) builds into its own `target/` on the host
-drive unless `CARGO_TARGET_DIR` points under `~/.cache`; see
+example under `.claude/worktrees/`) builds into its own `target/` on the bind
+mount unless `CARGO_TARGET_DIR` points under `~/.cache`; see
 [docs/guides/environment.md](../docs/guides/environment.md).
 
 ## GPU access
@@ -47,17 +51,24 @@ preload, the lavapipe caveats and what to do when the GPU is missing are in
 
 ## One-time setup
 
-Make sure `%USERPROFILE%\.ssh\authorized_keys` on the host contains your
-public key:
+In the distro, clone the repo and put your public key in the gitignored
+`keys/` folder:
 
-```
-type %USERPROFILE%\.ssh\id_ed25519.pub >> %USERPROFILE%\.ssh\authorized_keys
+```bash
+git clone https://github.com/AntonTegnelov/wave_forge.git ~/code/wave_forge
+cd ~/code/wave_forge && git switch develop
+mkdir -p keys
+tr -d '\r' < /mnt/c/Users/<you>/.ssh/id_ed25519.pub >> keys/authorized_keys
 ```
 
-The entrypoint installs this file into the container on every start, so key
-changes only need `docker compose restart`, not a rebuild.
+`keys/authorized_keys` must exist before the first `up`; if it is missing,
+Docker creates a root-owned directory in its place. The entrypoint installs
+the file into the container on every start, so key changes only need
+`docker compose restart`, not a rebuild.
 
 ## Build and start
+
+From the checkout in the distro:
 
 ```
 docker compose -f .devcontainer/docker-compose.yml up -d --build
@@ -129,11 +140,11 @@ credentials live on the `claude-config` named volume and survive rebuilds.
 
 ## Troubleshooting
 
-- **`Permission denied (publickey)`:** check that `%USERPROFILE%\.ssh\authorized_keys`
-  contains your pubkey, then `docker compose -f .devcontainer/docker-compose.yml restart`.
+- **`Permission denied (publickey)`:** check that `keys/authorized_keys` in the
+  checkout contains your pubkey, then `docker compose -f .devcontainer/docker-compose.yml restart`.
 - **Host key changed after `down -v`:** the host-key volume was wiped; run
   `ssh-keygen -R "[localhost]:2239"` on the host and reconnect.
 - **The GPU is missing, or wgpu picks the wrong adapter:** see "When the GPU is
   missing" in [docs/guides/environment.md](../docs/guides/environment.md).
-- **A build dir looks empty or stale:** you are seeing the `target` volume,
-  not the Windows build; just `cargo build`.
+- **A build dir looks empty or stale:** you are seeing the `target` volume;
+  just `cargo build`.
