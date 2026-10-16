@@ -7,6 +7,9 @@
 ## with. `make_continent_kits.gd` runs it over the repository's kits.
 extends RefCounted
 
+## Modules that draw nothing, air and a stair's headroom: a model for one is not looked at.
+const NOTHING_TO_DRAW := ["air", "stair_head"]
+
 ## What came of a run: the scene path bound to each module, and why each refused model was refused,
 ## as "batch/piece: why".
 class Outcome:
@@ -32,6 +35,8 @@ static func build(kits: String, sets: Dictionary[String, String], out: String) -
 			if file.get_extension() != "glb":
 				continue
 			var module := file.get_basename()
+			if module in NOTHING_TO_DRAW:
+				continue
 			var problems := PackedStringArray()
 			var mesh := _mesh(kits.path_join(batch).path_join(file), problems)
 			if mesh != null:
@@ -63,27 +68,36 @@ static func missing(sets: Dictionary[String, String], bound: Dictionary[String, 
 			names[found.get_string(1)] = true
 	var result := PackedStringArray()
 	for name: String in names:
-		# Air and a stair's headroom draw nothing.
-		if name != "air" and name != "stair_head" and not bound.has(name):
+		if not name in NOTHING_TO_DRAW and not bound.has(name):
 			result.append(name)
 	result.sort()
 	return result
 
-## `scene_text`, a scene file's text, with its `scenes` property replaced by `bound`, placed after
-## the `rules_files` property, as module name to scene path, sorted.
+## `scene_text`, a scene file's text, binding each module of `bound` to its scene: an external
+## resource per scene, `kit_<module>`, after the scene's own, and its `scenes` property as module
+## name to that resource, after `rules_files`, both sorted and replacing what an earlier run wrote.
+## Scenes bound as resources load with the scene on Godot's main thread, as the small city preset
+## binds its kit; bound as paths they would load on loader threads.
 static func bind(scene_text: String, bound: Dictionary[String, String]) -> String:
-	var text := RegEx.create_from_string("(?ms)^scenes = \\{\\n.*?^\\}\\n").sub(scene_text, "")
+	var text := RegEx.create_from_string("(?m)^\\[ext_resource type=\"PackedScene\" path=\"[^\"]*\" id=\"kit_[a-z0-9_]+\"\\]\\n").sub(scene_text, "", true)
+	text = RegEx.create_from_string("(?ms)^scenes = \\{\\n.*?^\\}\\n").sub(text, "")
+	# The resource count Godot reads as a hint changes with the kit, and Godot no longer writes it.
+	text = RegEx.create_from_string(" load_steps=[0-9]+").sub(text, "")
 	if bound.is_empty():
 		return text
 	var modules := bound.keys()
 	modules.sort()
-	var lines := PackedStringArray()
+	var resources := PackedStringArray()
+	var entries := PackedStringArray()
 	for module: String in modules:
-		lines.append("\"%s\": \"%s\"" % [module, bound[module]])
-	var block := "scenes = {\n%s\n}\n" % ",\n".join(lines)
+		resources.append("[ext_resource type=\"PackedScene\" path=\"%s\" id=\"kit_%s\"]\n" % [bound[module], module])
+		entries.append("\"%s\": ExtResource(\"kit_%s\")" % [module, module])
+	var last := text.rfind("[ext_resource ")
+	var resources_at := text.find("\n", last) + 1 if last >= 0 else text.find("\n") + 2
+	text = text.substr(0, resources_at) + "".join(resources) + text.substr(resources_at)
 	var rules := text.find("rules_files = {")
 	var after := text.find("\n}\n", rules) + 3
-	return text.substr(0, after) + block + text.substr(after)
+	return text.substr(0, after) + "scenes = {\n%s\n}\n" % ",\n".join(entries) + text.substr(after)
 
 ## The one mesh of the model at `path`, or null with why in `problems`.
 static func _mesh(path: String, problems: PackedStringArray) -> Mesh:

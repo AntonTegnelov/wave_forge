@@ -2,7 +2,8 @@
 ## glTF binaries: a shared ground tile on its slab is bound, as a scene of a lone mesh; one whose
 ## ground lies too low and one holding two meshes are refused, saying why; a batch named for no
 ## culture is refused; the modules still without a model leave the bound one out; and binding a
-## scene's text twice leaves one `scenes` property, after `rules_files`.
+## scene's text twice leaves one external resource per scene and one `scenes` property, after
+## `rules_files`.
 ##
 ## Run headless by `../verify.sh`, after `prepare.sh` has copied the continent's cultures.
 extends SceneTree
@@ -48,14 +49,14 @@ func _initialize() -> void:
 		return
 	print("verify_continent_kits: a good tile is bound as a lone mesh, and a tile walking too low, one of two meshes and an unknown batch are refused, saying why")
 
-	var text := "[node name=\"Continent\" type=\"WaveForgeStages\"]\nrules_files = {\n\"a\": \"a.ron\"\n}\nseed = 11\n"
+	var text := "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://x.gd\" id=\"1\"]\n\n[node name=\"Continent\" type=\"WaveForgeStages\"]\nrules_files = {\n\"a\": \"a.ron\"\n}\nseed = 11\n"
 	var once := ContinentKits.bind(text, outcome.bound)
 	var twice := ContinentKits.bind(once, outcome.bound)
-	var expected_text := "[node name=\"Continent\" type=\"WaveForgeStages\"]\nrules_files = {\n\"a\": \"a.ron\"\n}\nscenes = {\n\"grass\": \"%s\"\n}\nseed = 11\n" % outcome.bound["grass"]
+	var expected_text := "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://x.gd\" id=\"1\"]\n[ext_resource type=\"PackedScene\" path=\"%s\" id=\"kit_grass\"]\n\n[node name=\"Continent\" type=\"WaveForgeStages\"]\nrules_files = {\n\"a\": \"a.ron\"\n}\nscenes = {\n\"grass\": ExtResource(\"kit_grass\")\n}\nseed = 11\n" % outcome.bound["grass"]
 	if twice != expected_text:
 		_fail("binding twice gave:\n%s" % twice)
 		return
-	print("verify_continent_kits: binding writes one scenes property after rules_files, however often it runs")
+	print("verify_continent_kits: binding writes each scene as an external resource and one scenes property after rules_files, however often it runs")
 	quit(0)
 
 ## A ground slab across the whole cell, its top at `top`, as a mesh in the model's own frame.

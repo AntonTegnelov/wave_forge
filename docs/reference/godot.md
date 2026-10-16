@@ -573,8 +573,9 @@ unmoved mesh object, stays inside its cell from -0.5 to 0.5 with Y up (a stair r
 above), has a surface at Y = -0.25 just inside every walkable side, and keeps 0.02 clear of every
 side that faces air but at a roof's foot. Each model that passes becomes
 `continent_kits/<batch>/<piece>.tscn`, a lone `MeshInstance3D`, and `continent.tscn` binds every
-module to its scene in `scenes`; the tool prints why each refused model was refused and which
-modules still have no model.
+module to its scene in `scenes`, each scene an external resource of the scene file, so it loads
+with the scene on Godot's main thread as the small city preset's kit does. The tool prints why each
+refused model was refused and which modules still have no model.
 
 Paint and each brush have a shortcut under `wave_forge/` in the editor settings, which a user
 rebinds there: P toggles Paint, and 1 to 6 pick Raise, Lower, Smooth, Dig, Fill and Remove, while
