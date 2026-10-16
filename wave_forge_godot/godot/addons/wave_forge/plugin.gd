@@ -4,7 +4,8 @@ extends EditorPlugin
 ## selected WaveForgeStages node's world as edits, one undo action per stroke, and a preview that
 ## follows the editor's camera while the node's `preview_in_editor` is on. What a stroke does is the
 ## node's `paint`, so the editor and a game paint the same way; the plugin only turns the mouse into
-## a path along the ground. While not painting, the candidate of the node's `candidates_stage`
+## a path along the ground, and shows the brush's reach there as a ring (`brush_cursor.gd`). While
+## not painting, the candidate of the node's `candidates_stage`
 ## under the mouse, and what its stage's modifiers read there (`candidate_panel.gd`, N5). Below
 ## them, the world run of M1: the node's whole finite world run ahead of time into a directory
 ## (`world_run_panel.gd`), and the kit import of N6: a MeshLibrary's connectors proposed, named
@@ -24,6 +25,7 @@ const Presets := preload("res://addons/wave_forge/presets.gd")
 const Stack := preload("res://addons/wave_forge/stack.gd")
 const TranslationParser := preload("res://addons/wave_forge/translation_parser.gd")
 const RuleDrop := preload("res://addons/wave_forge/rule_drop.gd")
+const BrushCursor := preload("res://addons/wave_forge/brush_cursor.gd")
 
 ## The brushes of the dock, as `paint` names them, with how each is shown.
 const BRUSHES := {
@@ -65,6 +67,9 @@ var translation_parser: EditorTranslationParserPlugin
 var stages: Node
 ## The stroke under way: its path along the ground, and the edits before it, for undo.
 var stroking := false
+## The ring showing the brush's reach, an internal child of the node being edited, so it is never
+## saved with the scene.
+var cursor: Decal
 var path := PackedVector3Array()
 var before := ""
 
@@ -88,6 +93,8 @@ func _enter_tree() -> void:
 	add_dock(dock)
 
 func _exit_tree() -> void:
+	if is_instance_valid(cursor):
+		cursor.free()
 	remove_translation_parser_plugin(translation_parser)
 	remove_dock(dock)
 	dock.queue_free()
@@ -96,7 +103,12 @@ func _handles(object: Object) -> bool:
 	return object.get_class() == "WaveForgeStages"
 
 func _edit(object: Object) -> void:
+	if is_instance_valid(cursor):
+		cursor.free()
 	stages = object
+	if stages != null:
+		cursor = BrushCursor.new()
+		stages.add_child(cursor, false, Node.INTERNAL_MODE_BACK)
 	world_run.bind(object)
 	# A node just added, with nothing set, takes the default preset (N1).
 	if stages != null and Presets.is_fresh(stages) and FileAccess.file_exists(Presets.DEFAULT):
@@ -116,6 +128,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if stages == null or not is_instance_valid(stages):
 		return AFTER_GUI_INPUT_PASS
 	if not painting_toggle.button_pressed:
+		cursor.visible = false
 		if event is InputEventMouseMotion and not String(stages.candidates_stage).is_empty():
 			candidate.show_candidate(stages.candidate_under(camera.project_ray_origin(event.position), camera.project_ray_normal(event.position)))
 		return AFTER_GUI_INPUT_PASS
@@ -129,9 +142,11 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			stroking = false
 			_finish_stroke()
 		return AFTER_GUI_INPUT_STOP
-	if event is InputEventMouseMotion and stroking:
-		_add_point(camera, event.position)
-		return AFTER_GUI_INPUT_STOP
+	if event is InputEventMouseMotion:
+		cursor.show_at(_ground_under(camera, event.position), radius_spin.value, stages.cell_size)
+		if stroking:
+			_add_point(camera, event.position)
+			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
 
 ## Adds the ground under the mouse to the stroke's path, if the ray from the camera meets it.

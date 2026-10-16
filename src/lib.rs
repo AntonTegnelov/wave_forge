@@ -50,6 +50,7 @@
 
 pub mod ambience;
 pub mod cell_boxes;
+pub mod decals;
 pub mod far_ground;
 pub mod frozen;
 pub mod generator;

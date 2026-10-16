@@ -7,7 +7,8 @@
 # against its banks, and draws them again under the reference look, with the reference water shader
 # and wet banks, on both renderers; then checks each scattered point is drawn with its variant's mesh and its look
 # in the MultiMesh's custom data, which only a real renderer keeps; then checks the vegetation
-# shader tints a plant by its random and dryness, on Forward+; then draws the continent's far ground
+# shader tints a plant by its random and dryness, on Forward+; then draws a road's decals and checks
+# they cover it with no hairline between pieces, on Forward+; then draws the continent's far ground
 # toward a mountain range 1 to 2 km away (developer tool).
 #
 # Needs a Godot 4 binary (GODOT, or `godot` on PATH) and a display; without one, run it under
@@ -29,4 +30,5 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --rendering-method forward_plus --rendering-driver vulkan --path "$here/godot" --script render_water.gd -- look
 "${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script verify_variants.gd
 "${GODOT:-godot}" --rendering-method forward_plus --rendering-driver vulkan --path "$here/godot" --script render_tint.gd
+"${GODOT:-godot}" --rendering-method forward_plus --rendering-driver vulkan --path "$here/godot" --script render_decals.gd
 exec "${GODOT:-godot}" --rendering-driver opengl3 --resolution 1600x900 --path "$here/godot" --script render_continent_far.gd

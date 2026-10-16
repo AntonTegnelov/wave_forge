@@ -64,6 +64,7 @@ use wave_forge::{
 };
 
 mod audio;
+mod decals;
 mod ending;
 mod first_look;
 mod gi;

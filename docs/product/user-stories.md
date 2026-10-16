@@ -501,8 +501,8 @@ stage reads into town and wild districts; a location is placed on the town distr
 stage's mask keeps the town inside the painted columns, every other column of the site open
 ground under air. Erasing part of the mask solves that town again, the site staying where it was,
 while every chunk the eraser does not reach keeps its districts exactly (`tests/masks.rs`). The
-editor's plugin paints with the same brushes (`verify_paint.gd`); painting with the mouse in the
-editor is not automated.
+editor's plugin paints with the same brushes, and rings the ground a brush reaches with a decal
+cursor (`verify_paint.gd`); painting with the mouse in the editor is not automated.
 
 ### N5. Understand why nothing spawned
 

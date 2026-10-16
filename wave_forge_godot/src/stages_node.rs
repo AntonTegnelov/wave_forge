@@ -11,6 +11,7 @@
 //! `PhysicsServer3D` with every shape added before the body joins the space.
 
 use crate::audio::{InteriorBuses, RegionAudio};
+use crate::decals::RegionDecals;
 use crate::gi::Gi;
 use crate::grass::{Grass, GrassFade};
 use crate::lods::{add_levelled_surface, godot_triangles, levelled_mesh};
@@ -43,6 +44,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::DirectoryStore;
 use wave_forge::ambience::chunk_ambience;
+use wave_forge::decals::curve_decals;
 use wave_forge::loader::{RuleFile, parse_rule_file};
 use wave_forge::noise::{
     CellularDistanceFunction, CellularReturnType, DomainWarpFractalType, DomainWarpType,
@@ -352,6 +354,19 @@ pub struct WaveForgeStages {
     #[export]
     sounds: Dictionary<StringName, Option<Gd<AudioStream>>>,
 
+    /// Decals along the curves of Region and TableCurves stages, roads say, as a stage's name to a
+    /// scene whose root is a `Decal`. Each curve is cut into pieces as long as it is wide, and
+    /// every piece gets an instance of the scene, turned along the curve, as long and as wide as
+    /// the piece and standing on the ground of `ground_stage`. The scene's own `Decal` gives the
+    /// textures, the fades and the projection depth (`size.y`). Decals draw on every renderer from
+    /// Godot 4.8, and on Forward+ and Mobile before it.
+    #[export_group(name = "Decals")]
+    #[export]
+    curve_decals: Dictionary<StringName, Option<Gd<PackedScene>>>,
+    /// How many chunks around the followed position get their curves' decals. Below zero, none do.
+    #[export]
+    decal_radius: i32,
+
     /// Scenes placed where Scatter and Assemble stages put things, as a kind (a point's kind or a
     /// piece's name) to a `PackedScene` or a path to one, loaded on Godot's loader threads; give a
     /// scene holding another extension's Rust resource as a `PackedScene`, since such a resource
@@ -520,6 +535,10 @@ pub struct WaveForgeStages {
     audio: RegionAudio,
     /// Chunks within `audio_radius` whose sounds wait for what they read.
     audio_due: std::collections::BTreeSet<ChunkCoord>,
+    /// The decals of the chunks within `decal_radius`.
+    decals: RegionDecals,
+    /// Chunks within `decal_radius` whose decals wait for what they read.
+    decals_due: std::collections::BTreeSet<ChunkCoord>,
     occluders_due: std::collections::BTreeSet<ChunkCoord>,
     /// The scenes bound to kinds, and what each stage's chunk placed.
     placements: Placements,
@@ -978,6 +997,10 @@ impl INode for WaveForgeStages {
             sounds: Dictionary::new(),
             audio: RegionAudio::default(),
             audio_due: std::collections::BTreeSet::new(),
+            curve_decals: Dictionary::new(),
+            decal_radius: 2,
+            decals: RegionDecals::default(),
+            decals_due: std::collections::BTreeSet::new(),
             occluders_due: std::collections::BTreeSet::new(),
             scenes: VarDictionary::new(),
             placement_budget_ms: 2.0,
@@ -1298,6 +1321,7 @@ impl INode for WaveForgeStages {
         self.update_occluders(&towns);
         self.update_grass();
         self.update_audio(&near_changed);
+        self.update_decals(&near_changed);
         let placing = std::time::Instant::now();
         self.give_mesh_shapes();
         frame.placed = self.update_placements();
@@ -3531,6 +3555,73 @@ impl WaveForgeStages {
         }
     }
 
+    /// Keeps the decals of `curve_decals` on every chunk with ground within `decal_radius` of the
+    /// followed chunk, a few a frame, nearest first, once its curves and its ground have arrived;
+    /// drops them from the chunks out of range or without ground.
+    fn update_decals(&mut self, changed: &[ChunkCoord]) {
+        let (Some(worker), Some(focus)) = (&self.worker, self.followed) else {
+            return;
+        };
+        if self.curve_decals.is_empty() {
+            return;
+        }
+        let grounded: HashSet<ChunkCoord> = self.grounds.keys().copied().collect();
+        let built: HashSet<ChunkCoord> = self.decals.chunks().collect();
+        let plan = radius::plan(
+            self.decal_radius,
+            focus,
+            &grounded,
+            &built,
+            &mut self.decals_due,
+            changed,
+            BODIES_PER_FRAME,
+        );
+        let size = [
+            self.chunk_cells.x.max(1) as u32,
+            self.chunk_cells.y.max(1) as u32,
+        ];
+        let cell = self.cell_size.to_array();
+        let ground = self.ground_stage.to_string();
+        let mut ready = Vec::new();
+        'chunks: for chunk in plan.build {
+            let mut pieces = Vec::new();
+            for (stage, scene) in self.curve_decals.iter_shared() {
+                let Some(scene) = scene else {
+                    continue;
+                };
+                let found = worker
+                    .curves(&stage.to_string(), chunk)
+                    .zip(worker.field(&ground, chunk))
+                    .and_then(|(curves, field)| {
+                        let (low_x, low_y) = (
+                            i64::from(chunk.x) * i64::from(size[0]),
+                            i64::from(chunk.y) * i64::from(size[1]),
+                        );
+                        curve_decals(
+                            curves,
+                            chunk,
+                            size,
+                            |x, y| Some(field.get((x - low_x) as u32, (y - low_y) as u32)),
+                            cell,
+                        )
+                    });
+                let Some(found) = found else {
+                    self.decals_due.insert(chunk);
+                    continue 'chunks;
+                };
+                pieces.push((stage, scene, found));
+            }
+            ready.push((chunk, pieces));
+        }
+        for chunk in plan.gone {
+            self.decals.drop_chunk(chunk);
+        }
+        let mut owner = self.base().clone().upcast::<Node>();
+        for (chunk, pieces) in ready {
+            self.decals.build(&mut owner, chunk, &pieces);
+        }
+    }
+
     /// Builds the ground of up to [`GROUNDS_PER_FRAME`] chunks a newly arrived field may have
     /// completed, within [`GROUNDS_BUDGET_MS`] after the first, nearest the followed position
     /// first, and frees the ground of chunks whose own field was dropped.
@@ -5384,6 +5475,30 @@ impl WaveForgeStages {
             } else if radius(value) != radius(&self.far_ground_stage) {
                 problems.push(format!(
                     "{setting} {stage:?} needs far_ground_stage's radius in target_radii, or the far ground ends where its {gives} do"
+                ));
+            }
+        }
+        for (stage, _) in self.curve_decals.iter_shared() {
+            let curves = matches!(
+                pack.kind(&stage.to_string()),
+                Some(
+                    StageKind::Region { .. }
+                        | StageKind::Rivers { .. }
+                        | StageKind::Network { .. }
+                        | StageKind::TableCurves { .. }
+                )
+            );
+            if !curves {
+                problems.push(format!(
+                    "curve_decals names \"{stage}\", which is no Region, Rivers, Network or TableCurves stage of the pack"
+                ));
+            } else if !self.targets.as_slice().contains(&GString::from(&stage)) {
+                problems.push(format!(
+                    "curve_decals names \"{stage}\", which is no target, so its decals never arrive"
+                ));
+            } else if self.ground_stage.is_empty() {
+                problems.push(format!(
+                    "curve_decals names \"{stage}\", but there is no ground_stage for its decals to stand on"
                 ));
             }
         }
