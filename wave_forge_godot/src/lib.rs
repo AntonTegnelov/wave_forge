@@ -590,6 +590,38 @@ impl WaveForgeWorld {
         GString::from(wave_forge::import::propose(&kit::modules(&items), kit::TOLERANCE).as_str())
     }
 
+    /// What a model drawn for `module` of the module set `module_set` (a module set file's text)
+    /// breaks of its faces' contracts, as sentences: empty for a model that meets them. The model
+    /// is `triangles`, three vertices each, in its own frame: a cell from -0.5 to 0.5 on every axis,
+    /// Y up, its sides `+X`, `-X`, `+Z` and `-Z` in the module file's order. It has to stay in its
+    /// cell (a stair may rise into the cell above), walk at Y = -0.25 just inside every walkable
+    /// side, and keep clear of every side that faces air, but for a roof's foot
+    /// (`wave_forge::kit_check`). A module set that does not parse, or has no such module, is
+    /// reported the same way.
+    #[func]
+    fn check_kit_model(
+        module_set: GString,
+        module: GString,
+        triangles: PackedVector3Array,
+    ) -> PackedStringArray {
+        let faces = match wave_forge::kit_check::module_faces(&module_set.to_string()) {
+            Ok(faces) => faces,
+            Err(error) => {
+                return PackedStringArray::from([GString::from(error.to_string().as_str())]);
+            }
+        };
+        let Some(faces) = faces.iter().find(|faces| faces.name == module.to_string()) else {
+            return PackedStringArray::from([GString::from(
+                format!("the module set has no module {module}").as_str(),
+            )]);
+        };
+        let triangles: Vec<[f32; 3]> = triangles.as_slice().iter().map(|v| v.to_array()).collect();
+        wave_forge::kit_check::check_model(faces, &triangles)
+            .iter()
+            .map(|problem| GString::from(problem.to_string().as_str()))
+            .collect()
+    }
+
     /// A module set learnt from `template`'s patterns of `n` by `n` pixels, as WFC's overlapping
     /// model learns them, as text for `load_rules`: a module per distinct window of the image,
     /// weighted by how often it occurs, whose sides fit where two windows agree on what they
