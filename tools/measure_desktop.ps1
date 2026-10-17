@@ -6,7 +6,8 @@ Builds Wave Forge and runs every measurement that waits on a desktop, then zips 
 What it measures and why is in docs/guides/desktop-measurements.md, which is also the step-by-step
 guide. In short, on each graphics API in -Apis:
   - Bevy (#39): frame times while a city streams, on Bevy's device and on one of the solver's own,
-    at a walk and in flight, and with smaller batches (wave_forge_bevy/examples/frame_times.rs).
+    at a walk and in flight, and with smaller batches (wave_forge_bevy/examples/frame_times.rs);
+    and (#318) the same target drawn by wgpu alone (wave_forge_bevy/examples/wgpu_frame_times.rs).
   - Godot (#39, P1): frame times while the city streams with its models drawn, on Forward+, with
     what drawing a chunk costs Godot's thread (wave_forge_godot/godot/measure_city.gd).
   - Godot (#166, P2): grass, ground levels of detail and far ground on Forward+ (render_ground.gd,
@@ -172,9 +173,9 @@ $Targets = @{
     bevy  = Join-Path $BuildDir "target/wave_forge_bevy"
 }
 if ($OnWindows) {
-    $Library = "wave_forge_godot.dll"; $FrameTimes = "frame_times.exe"
+    $Library = "wave_forge_godot.dll"; $FrameTimes = "frame_times.exe"; $WgpuFrameTimes = "wgpu_frame_times.exe"
 } else {
-    $Library = "libwave_forge_godot.so"; $FrameTimes = "frame_times"
+    $Library = "libwave_forge_godot.so"; $FrameTimes = "frame_times"; $WgpuFrameTimes = "wgpu_frame_times"
 }
 
 # Puts what a Godot project in this repository loads next to it: the extension, the city rule set,
@@ -244,7 +245,7 @@ if (-not $SkipBuild) {
     }
     if ($Only -contains "bevy") {
         $env:CARGO_TARGET_DIR = $Targets.bevy
-        Invoke-Checked "build-bevy" "cargo" @("build", "--release", "--example", "frame_times", "--manifest-path", (Join-Path $Repo "wave_forge_bevy/Cargo.toml"))
+        Invoke-Checked "build-bevy" "cargo" @("build", "--release", "--example", "frame_times", "--example", "wgpu_frame_times", "--manifest-path", (Join-Path $Repo "wave_forge_bevy/Cargo.toml"))
     }
 }
 Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
@@ -283,6 +284,8 @@ foreach ($api in $Apis) {
             }
             [void](Invoke-Logged $name $bevy $arguments)
         }
+        $bare = Join-Path $Targets.bevy "release/examples/$WgpuFrameTimes"
+        [void](Invoke-Logged "bevy-$api-bare" $bare @("--seconds", $seconds, "--out", $out))
         Remove-Item Env:WGPU_BACKEND -ErrorAction SilentlyContinue
     }
     $renderer = @("--rendering-driver", $api, "--rendering-method", "forward_plus")
