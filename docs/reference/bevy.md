@@ -191,11 +191,10 @@ place names to `bevy_kira_audio` and Fluent, neither of which the plugin depends
   for its key, spawned on `ChunkUpdated` and stopped on `ChunkEvicted` or when the chunk is
   generated again.
 - A sound on the other side of a wall from the listener, one indoors and the other not, is heard
-  over a quarter of its `SpatialRadius`. `bevy_kira_audio` 0.27 has no effects and no buses, so
-  interiors cannot reverb or route a room's sounds through it: a channel's volume is written onto
-  each of its sounds, and spatial audio overwrites each sound's volume every frame. Reverb waits for
-  a crate that exposes it on the tracked Bevy version
-  ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
+  over a quarter of its `SpatialRadius`. Interiors do not reverb or route a room's sounds through
+  a bus of their own yet ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
+  `bevy_kira_audio` 0.27.1 can: a channel added with an `AudioTrack` plays its sounds through that
+  track's effects, kira's reverb among them.
 - A location's `Site::name()` is formatted by a thread-safe Fluent bundle
   (`fluent::concurrent::FluentBundle`, so it can be a resource) from its key and arguments, the
   isolation marks off, and a key without a translation falls back to the key.

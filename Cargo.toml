@@ -30,7 +30,7 @@ libm = "0.2.16"
 wgpu = { version = "30.0.1", optional = true }
 # Reflection of the noise configuration, so a Bevy game edits it as it edits its own components;
 # the Bevy plugin turns it on, at the Bevy version it tracks.
-bevy_reflect = { version = "0.20.0-rc.1", optional = true }
+bevy_reflect = { version = "0.20.0", optional = true }
 
 [dev-dependencies]
 # The CPU reference solver: the facade's tests run without a GPU.
