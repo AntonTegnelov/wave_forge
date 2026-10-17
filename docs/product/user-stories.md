@@ -807,9 +807,11 @@ the library's whole run took 676 s, over the 10 minutes
 square of an input around each column read it once per chunk, and a Volume its inputs once over its
 chunk's columns, and in the dev container the whole run fell from 729 to 418 s (L55, L56); on
 today's pack it takes 476 s on one stage thread and 266 s on every core, as the Godot node's run now
-generates (L59), and 222 s with each block's chunks encoded on every core too (L60). On the
-reference desktop the node's bake of `continent.tscn`, far ground included, took 708 and 723 s,
-still over the 10 minutes, its `rock` stage the costliest at 111 s of L34's part (D23, D24). Played
+generates (L59), and 222 s with each block's chunks encoded on every core too (L60). The node's
+own bake of `continent.tscn`, far ground included, takes 158 s there (L61), against 628 to 866 s on
+one stage thread before (L48 to L54). On the reference desktop that bake took 708 and 723 s on one
+stage thread, over the 10 minutes, its `rock` stage the costliest at 111 s of L34's part (D23, D24);
+the next desktop run measures it on every core. Played
 back at 1080p it walks and flies at p99 1.6 to 1.8 ms a frame with no stage run, but flying meets
 single frames of 267 ms on Vulkan and 1 124 ms on Direct3D 12, over the 16.7 ms bar (D25).
 
