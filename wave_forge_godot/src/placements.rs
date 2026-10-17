@@ -15,7 +15,7 @@ use crate::gi::Gi;
 use godot::classes::multi_mesh::TransformFormat;
 use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
-    Mesh, MeshInstance3D, MultiMesh, MultiMeshInstance3D, Node, Node3D, PackedScene,
+    DisplayServer, Mesh, MeshInstance3D, MultiMesh, MultiMeshInstance3D, Node, Node3D, PackedScene,
     RenderingServer, ResourceLoader,
 };
 use godot::prelude::*;
@@ -448,6 +448,16 @@ fn binding(kind: &str, value: &Variant) -> Result<Binding, String> {
             "scene of {kind:?}: a PackedScene or a path to one, or an array of them, not {value}"
         ));
     };
+    // A headless Godot's dummy renderer cannot create meshes and materials on several threads at
+    // once: dozens of mesh scenes loading on loader threads printed "Attempting to initialize the
+    // wrong RID" and could crash it. Headless, a scene loads here, on Godot's main thread.
+    if DisplayServer::singleton().get_name() == "headless" {
+        let scene = ResourceLoader::singleton()
+            .load(&path)
+            .and_then(|resource| resource.try_cast::<PackedScene>().ok())
+            .ok_or_else(|| format!("scene of {kind:?}: {path} could not be loaded"))?;
+        return Ok(classify(&scene));
+    }
     // godot-rust leaves the threaded loader out of builds with its thread safeguards, because a
     // Rust resource loaded on a loader thread aborts the process
     // (docs/architecture/engine-integration.md); a plain scene holds none.

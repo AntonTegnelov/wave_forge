@@ -34,7 +34,9 @@
 # `godot/verify_presets.gd`, which takes every preset the plugin ships as a new node and checks it
 # stands a lit, walkable world with nothing printed, then `godot/verify_walk.gd`, which walks
 # the default preset with the plugin's walker and no code, then `godot/verify_demo.gd`, which runs
-# the addon's demo scene, lit by its sun and sky, with nothing printed, then the editor itself, headless,
+# the addon's demo scene, lit by its sun and sky, with nothing printed, then
+# `godot/verify_scene_paths.gd`, which loads many scenes bound by path with nothing printed, then
+# the editor itself, headless,
 # which has to load the editor plugin (`godot/addons/wave_forge`) without a script error, its dock
 # an `EditorDock` and its shortcuts in the editor settings (`godot/verify_plugin.gd`), then
 # `godot/verify_sound.gd`, which checks the city's region tags and sound, then
@@ -81,8 +83,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_inspector.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_typed_maps.gd
 # N1: a preset's first play, and walking it, print no error and no warning; the device's own
-# notices aside.
-for script in verify_presets.gd verify_walk.gd verify_demo.gd; do
+# notices aside. So do many scenes bound by path loading at once (#465).
+for script in verify_presets.gd verify_walk.gd verify_demo.gd verify_scene_paths.gd; do
 	log="$(mktemp)"
 	"${GODOT:-godot}" --headless --path "$here/godot" --script "$script" 2>&1 | tee "$log"
 	if grep -E "^(ERROR|WARNING|SCRIPT ERROR)" "$log" | grep -v -E "dzn is not a conformant|XDG_RUNTIME_DIR"; then
