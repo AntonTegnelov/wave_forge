@@ -26,7 +26,9 @@ And P1 on a stage world: a camera walked into the small city preset on each grap
 (measure_city_preset.gd); and P2: a camera flown over the hills preset generated live with its far
 ground out to 2 km (measure_view.gd); and P6: the islands preset's preview showing a changed
 parameter, its near stages alone and with its far ground (measure_preview.gd). And M2, once, headless: a new world made from nothing, the
-game's history and then the whole continent (examples/new_world/measure.gd).
+game's history and then the whole continent (examples/new_world/measure.gd). And (#277) the
+addon's demo scene exported with Godot's shader baker on and off, each export's first seconds run
+cold three times (first_frames.gd); this downloads Godot's export templates (1.2 GB) once.
 
 Everything goes into measurements/<date-time>/ in the repository, and a zip of it next to that
 folder. A run that fails is recorded and the others go on; the script ends with a non-zero exit code
@@ -50,7 +52,7 @@ The graphics APIs to measure on: vulkan, d3d12 or both (the default on Windows).
 How long each measured phase lasts. Default 20.
 
 .PARAMETER Only
-Run only some parts: bevy, godot, ground, history, m1, m2, preset, stages, volume. Default all.
+Run only some parts: baker, bevy, godot, ground, history, m1, m2, preset, stages, volume. Default all.
 
 .PARAMETER SkipBuild
 Use what an earlier run built.
@@ -64,7 +66,7 @@ param(
     [string]$BuildDir = "",
     [string[]]$Apis = @(),
     [int]$Seconds = 20,
-    [string[]]$Only = @("bevy", "godot", "ground", "history", "m1", "m2", "preset", "stages", "volume"),
+    [string[]]$Only = @("baker", "bevy", "godot", "ground", "history", "m1", "m2", "preset", "stages", "volume"),
     [switch]$SkipBuild
 )
 
@@ -81,8 +83,8 @@ if ($BuildDir -eq "") {
 $Apis = @($Apis | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 $Only = @($Only | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 foreach ($part in $Only) {
-    if (@("bevy", "godot", "ground", "history", "m1", "m2", "preset", "stages", "volume") -notcontains $part) {
-        throw "-Only takes bevy, godot, ground, history, m1, m2, preset, stages and volume, not $part"
+    if (@("baker", "bevy", "godot", "ground", "history", "m1", "m2", "preset", "stages", "volume") -notcontains $part) {
+        throw "-Only takes baker, bevy, godot, ground, history, m1, m2, preset, stages and volume, not $part"
     }
 }
 if ($Apis.Count -eq 0) {
@@ -373,11 +375,56 @@ if ($Only -contains "stages") {
     Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
 }
 
+if ($Only -contains "baker") {
+    # Godot's shader baker (#277): the demo scene's first seconds in an export whose shaders are
+    # baked and in one whose are not, alternating, each run cold three times.
+    if ($OnWindows) {
+        $templates = Join-Path $env:APPDATA "Godot/export_templates/$GodotVersion.stable"
+        $template = "windows_release_x86_64.exe"; $platform = "Windows"; $executable = "first_frames.exe"
+        $userData = Join-Path $env:APPDATA "Godot/app_userdata/wave_forge_first_frames"
+    } else {
+        $templates = Join-Path $HOME ".local/share/godot/export_templates/$GodotVersion.stable"
+        $template = "linux_release.x86_64"; $platform = "Linux"; $executable = "first_frames.x86_64"
+        $userData = Join-Path $HOME ".local/share/godot/app_userdata/wave_forge_first_frames"
+    }
+    if (-not (Test-Path (Join-Path $templates $template))) {
+        $tpz = Join-Path $BuildDir "Godot_v$GodotVersion-stable_export_templates.tpz"
+        if (-not (Test-Path $tpz)) {
+            Say "downloading Godot $GodotVersion's export templates (1.2 GB)"
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri "https://github.com/godotengine/godot/releases/download/$GodotVersion-stable/Godot_v$GodotVersion-stable_export_templates.tpz" -OutFile $tpz -UseBasicParsing
+        }
+        New-Item -ItemType Directory -Force -Path $templates | Out-Null
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($tpz)
+        try {
+            foreach ($name in @($template, "version.txt")) {
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($archive.GetEntry("templates/$name"), (Join-Path $templates $name), $true)
+            }
+        } finally { $archive.Dispose() }
+    }
+    foreach ($kind in @("unbaked", "baked")) {
+        $dir = Join-Path $BuildDir "first_frames/$kind"
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        # Not headless: the baker bakes only under a renderer with a rendering device.
+        [void](Invoke-Logged "baker-export-$kind" $Godot @("--path", $GodotProject, "--export-release", "$platform $kind", (Join-Path $dir $executable)))
+    }
+    $out = Join-Path $Results "baker.txt"
+    foreach ($round in 1..3) {
+        foreach ($kind in @("unbaked", "baked")) {
+            # Cold: nothing Godot cached from an earlier run, shaders or pipelines.
+            if (Test-Path $userData) { Remove-Item -Recurse -Force $userData }
+            [void](Invoke-Logged "baker-$kind-$round" (Join-Path $BuildDir "first_frames/$kind/$executable") @("--resolution", "1920x1080", "--", "--label", $kind, "--out", $out))
+        }
+    }
+}
+
 # --- Summary -----------------------------------------------------------------------------------
 
 $summary = New-Object System.Collections.Generic.List[string]
 $summary.AddRange([string[]](Get-Content (Join-Path $Results "system.txt")))
-foreach ($file in @("bevy.txt", "godot_city.txt", "m1.txt", "m2.txt", "preset.txt", "p3.txt")) {
+foreach ($file in @("baker.txt", "bevy.txt", "godot_city.txt", "m1.txt", "m2.txt", "preset.txt", "p3.txt")) {
     $path = Join-Path $Results $file
     if (Test-Path $path) { $summary.Add(""); $summary.AddRange([string[]](Get-Content $path)) }
 }
