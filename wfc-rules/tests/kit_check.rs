@@ -1,6 +1,7 @@
 //! A model drawn for a module, checked against the contracts of the module's faces: it stays in its
 //! cell, a stair rising into the cell above; it has a walking surface at the height every walkable
 //! side's neighbours walk at; and it keeps clear of a side that faces air, a roof's foot excepted.
+#![cfg(feature = "serde")]
 
 use wfc_rules::formats::module_format::module_faces;
 use wfc_rules::kit_check::{ModelProblem, check_model};
