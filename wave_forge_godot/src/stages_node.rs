@@ -368,7 +368,8 @@ pub struct WaveForgeStages {
     decal_radius: i32,
 
     /// Scenes placed where Scatter and Assemble stages put things, as a kind (a point's kind or a
-    /// piece's name) to a `PackedScene` or a path to one, loaded on Godot's loader threads; give a
+    /// piece's name) to a `PackedScene` or a path to one, loaded on Godot's loader threads (headless,
+    /// on its main thread); give a
     /// scene holding another extension's Rust resource as a `PackedScene`, since such a resource
     /// aborts the process when loaded on a loader thread. A
     /// scene whose root is a lone `MeshInstance3D` without a script is drawn as one MultiMesh per

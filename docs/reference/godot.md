@@ -665,8 +665,9 @@ holds it, turned by the tile's rotation, a unit model scaled to the cell as `tow
 gives it, so a town is drawn with no code. A module drawn from a lone mesh collides with that mesh
 too, its triangles scaled to the cell as a concave shape, unless `set_collision_shape` gives it a
 shape of its own, so a town drawn with no code is walked on and into as it is drawn. A value is a
-`PackedScene`, or a path the node loads on Godot's loader threads when it starts, or an array of
-them: the kind's variants, of which each point takes the one its `variant` names
+`PackedScene`, or a path the node loads on Godot's loader threads when it starts (in a headless
+Godot on its main thread, whose dummy renderer cannot create meshes and materials on several threads
+at once), or an array of them: the kind's variants, of which each point takes the one its `variant` names
 ([packs.md](packs.md#scatter)), counting round the array again past its end, so a kind whose stage
 draws four variants may be bound to two scenes. Placing waits until every scene has loaded. A
 user's own models bind as variants exactly as the plugin's do. A scene holding

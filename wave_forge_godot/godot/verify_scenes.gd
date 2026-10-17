@@ -1,8 +1,8 @@
 ## Binds scenes to what a pack places and checks each stands where its stage put it.
 ##
 ## Run by `../verify.sh` after `verify_assemble.gd`. Trees are a lone mesh, so they are drawn as
-## MultiMeshes; houses are a scene given as a PackedScene and streets one given by a path, loaded
-## on Godot's loader threads, so both are placed as nodes. Every house and street piece the stage
+## MultiMeshes; houses are a scene given as a PackedScene and streets one given by a path, which a
+## headless Godot loads on its main thread, so both are placed as nodes. Every house and street piece the stage
 ## grew gets exactly one node, named by `instance_spawned`, standing at the piece's transform, and
 ## every tree is drawn once. With a promotion radius that puts some pieces inside and some outside,
 ## those outside are freed as nodes and drawn as MultiMeshes of their mesh instead, and become
