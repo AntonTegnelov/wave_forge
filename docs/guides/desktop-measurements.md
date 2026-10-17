@@ -20,6 +20,7 @@ On Vulkan and on Direct3D 12:
 | The small city preset walked by a camera at 4.2 m/s from the world's origin into the city, its town, grass, bodies and navigation built around it, in a window of 1920 by 1080 on Forward+, with the node's own time | `wave_forge_godot/godot/measure_city_preset.gd` | P1's bars on a stage world with a town drawn ([#307](https://github.com/AntonTegnelov/wave_forge/issues/307)) |
 | The hills preset generated live with its far ground out to 2 km, a camera flying 60 m over it at 30 m/s, in a window of 1920 by 1080 on Forward+, with the node's own time and the chunks per second its near and far levels generate | `wave_forge_godot/godot/measure_view.gd` | P2's view distance |
 | The islands preset's preview at a view of one chunk showing each of its parameters changed five times, its near stages alone and with its far ground, on Forward+ | `wave_forge_godot/godot/measure_preview.gd` | P6's 200 ms, as the editor's preview shows it |
+| The addon's demo scene exported twice with `export_presets.cfg`, once with Godot's shader baker and once without, and each export's first 15 seconds run cold three times, alternating, in a window of 1920 by 1080: the first frame, the slowest frame and when it came, frames over 33 ms, the first 120 frames' total and when the ground arrived. Downloads Godot's export templates (1.2 GB) into the build directory once; on Windows the export carries Direct3D 12's shaders, its default driver | `wave_forge_godot/godot/first_frames.gd` | what the baker saves on an export's first frames, where shaders compile ([#277](https://github.com/AntonTegnelov/wave_forge/issues/277)) |
 
 Once, headless, before the runs above: the whole continent baked from `continent.tscn` through the
 node's world run, as the editor dock's World run bakes it, from an empty directory, with the time it
@@ -96,7 +97,7 @@ a non-zero code; the others still ran.
 | Option | Default | Use |
 |---|---|---|
 | `-Apis vulkan` or `-Apis d3d12` | both | measure on one graphics API only |
-| `-Only bevy,godot,ground,history,m1,m2,preset,stages,volume` | all | run only some parts, for example again after a failure |
+| `-Only baker,bevy,godot,ground,history,m1,m2,preset,stages,volume` | all | run only some parts, for example again after a failure |
 | `-Seconds 20` | 20 | how long each measured phase lasts |
 | `-SkipBuild` | | use what the last run built |
 | `-BuildDir D:\wave_forge-build` | `%LOCALAPPDATA%\wave_forge` | where Cargo builds and Godot is downloaded to |

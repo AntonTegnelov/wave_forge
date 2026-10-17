@@ -1,13 +1,19 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
 config_version=5
 
 [application]
+
 config/name="wave_forge_verify"
 config/features=PackedStringArray("4.7")
-run/main_scene=""
-
-[physics]
-
-3d/physics_engine="Jolt Physics"
+config/name.first_frames="wave_forge_first_frames"
+run/main_scene.first_frames="res://first_frames.tscn"
 
 [autoload]
 
@@ -16,3 +22,7 @@ VerifyPlugin="*res://verify_plugin.gd"
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/wave_forge/plugin.cfg")
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
