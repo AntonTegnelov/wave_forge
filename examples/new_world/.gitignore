@@ -3,6 +3,7 @@ bin/
 addons/
 continent/
 continent.tscn
+continent_kits/
 continent.gd
 peak_memory.gd
 walker.tscn

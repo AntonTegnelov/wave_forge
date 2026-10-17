@@ -243,6 +243,11 @@ if (-not $SkipBuild) {
     foreach ($file in @("continent.tscn", "continent.gd", "peak_memory.gd", "walker.tscn", "walker.gd")) {
         Copy-Item (Join-Path $GodotProject $file) (Join-Path $NewWorld $file) -Force
     }
+    $kits = Join-Path $NewWorld "continent_kits"
+    if (Test-Path $kits) { Remove-Item -Recurse -Force $kits }
+    if (Test-Path (Join-Path $GodotProject "continent_kits")) {
+        Copy-Item -Recurse (Join-Path $GodotProject "continent_kits") $kits
+    }
     if ($Only -contains "bevy") {
         $env:CARGO_TARGET_DIR = $Targets.bevy
         Invoke-Checked "build-bevy" "cargo" @("build", "--release", "--example", "frame_times", "--example", "wgpu_frame_times", "--manifest-path", (Join-Path $Repo "wave_forge_bevy/Cargo.toml"))

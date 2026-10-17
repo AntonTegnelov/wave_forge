@@ -565,6 +565,18 @@ the scene's script (`continent.gd`) gives the node the history a game would simu
 `continent/history.json`, as its `settlements` table whenever it has started without one.
 `prepare.sh` copies the pack, the cultures and the history into `continent/`.
 
+Its towns are drawn with authored models, one per module with something to draw: 31 pieces every
+culture shares and 28 of each culture's own, as `examples/continent/kits/<batch>/<piece>.glb`, the
+batch `shared` or the culture's file name. `tools/make_continent_kits.gd` checks each model against
+its module's faces in every culture it belongs to (`WaveForgeWorld.check_kit_model`): it holds one
+unmoved mesh object, stays inside its cell from -0.5 to 0.5 with Y up (a stair rising into the cell
+above), has a surface at Y = -0.25 just inside every walkable side, and keeps 0.02 clear of every
+side that faces air but at a roof's foot. Each model that passes becomes
+`continent_kits/<batch>/<piece>.tscn`, a lone `MeshInstance3D`, and `continent.tscn` binds every
+module to its scene in `scenes`, each scene an external resource of the scene file, so it loads
+with the scene on Godot's main thread as the small city preset's kit does. The tool prints why each
+refused model was refused and which modules still have no model.
+
 Paint and each brush have a shortcut under `wave_forge/` in the editor settings, which a user
 rebinds there: P toggles Paint, and 1 to 6 pick Raise, Lower, Smooth, Dig, Fill and Remove, while
 the 3D viewport has focus and a `WaveForgeStages` node is selected.

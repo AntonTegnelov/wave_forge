@@ -7,6 +7,9 @@ pub mod formats;
 /// Contains logic for generating expanded rules based on symmetry.
 pub mod generator;
 pub mod import;
+/// Checks a model drawn for a module against its faces, which it reads from a module set file.
+#[cfg(feature = "serde")]
+pub mod kit_check;
 /// Contains the main rule loading functions.
 pub mod loader;
 pub mod modules;
