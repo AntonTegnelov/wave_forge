@@ -154,7 +154,7 @@ Each is a gap between the code and the design or the stories, with where it is t
   ([godot.md](../reference/godot.md#editor)); Bevy's wait for Bevy's editor
   ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). Far proxies, occluders and GI by
   content class are built ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)); occluders
-  pay only from street level (E50). A Bevy example maps region tags to `bevy_kira_audio` and place
+  pay only from street level (E50, E80). A Bevy example maps region tags to `bevy_kira_audio` and place
   names to Fluent ([bevy.md](../reference/bevy.md#sound-and-names)); interiors that reverb through buses wait for an audio
   crate that has them on the tracked Bevy
   ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
