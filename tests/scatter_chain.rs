@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use wave_forge::stages::{Pack, PackError, Point, Runtime};
+use wave_forge::stages::{MAX_SCATTER_SLOTS, Pack, PackError, Point, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const PACK: &str = r#"(
@@ -102,7 +102,11 @@ fn a_group_scatters_around_its_first_point_within_its_radius() {
 
     let mut groups: BTreeMap<(ChunkCoord, u32, u16), Vec<Point>> = BTreeMap::new();
     for point in all(&points) {
-        let key = (point.id.chunk, point.id.cell(), point.id.slot() / 256);
+        let key = (
+            point.id.chunk,
+            point.id.cell(),
+            point.id.slot() / MAX_SCATTER_SLOTS as u16,
+        );
         groups.entry(key).or_default().push(point);
     }
 
