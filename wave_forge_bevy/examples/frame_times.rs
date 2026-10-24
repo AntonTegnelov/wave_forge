@@ -210,6 +210,9 @@ fn main() {
             .with_z(0..1),
         halo: 1,
         cell_size: Vec3::splat(CELL),
+        // Chunks a chunk beyond the focus's radius are evicted, so the scene stays the size of
+        // the view while the focus moves along the city.
+        evict_margin: Some(1),
         ..WaveForgeSettings::default()
     };
     let mut solver = SolverConfig::default();

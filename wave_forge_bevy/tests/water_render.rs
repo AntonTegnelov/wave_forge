@@ -182,11 +182,21 @@ fn render(reference: Option<WaterLook>) -> Vec<u8> {
 
     let started = Instant::now();
     let mut frames = 0;
-    // Pipelines compile over the first frames; keep reading until the picture has settled.
-    while frames < 60 || app.world().resource::<Pixels>().0.is_none() {
+    // Pipelines compile over the first frames; keep reading until two readbacks in a row agree,
+    // the picture having settled.
+    let mut last: Option<Vec<u8>> = None;
+    loop {
         app.update();
         frames += 1;
-        assert!(started.elapsed() < Duration::from_secs(60), "no picture");
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "no settled picture"
+        );
+        let now = app.world().resource::<Pixels>().0.clone();
+        if frames >= 60 && now.is_some() && now == last {
+            break;
+        }
+        last = now;
     }
     app.world()
         .resource::<Pixels>()
