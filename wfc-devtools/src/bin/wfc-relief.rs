@@ -174,7 +174,7 @@ fn main() -> Result<()> {
             for curve in runtime.curves(curves, chunk).unwrap_or(&[]) {
                 for pair in curve.points.windows(2) {
                     let (a, b) = (pair[0], pair[1]);
-                    let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / scale * 4.0)
+                    let steps = (libm::hypotf(b[0] - a[0], b[1] - a[1]) / scale * 4.0)
                         .ceil()
                         .max(1.0);
                     for k in 0..=steps as u32 {

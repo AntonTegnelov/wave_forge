@@ -101,7 +101,7 @@ fn a_river_runs_on_through_hollows_to_the_sea_its_regions_edge_or_another_river(
                 && other
                     .points
                     .iter()
-                    .any(|p| (p[0] - mouth[0]).hypot(p[1] - mouth[1]) <= 2.0 * STEP)
+                    .any(|p| libm::hypotf(p[0] - mouth[0], p[1] - mouth[1]) <= 2.0 * STEP)
         });
         let why = if ground(mouth) <= 0.0 {
             "sea"
@@ -251,7 +251,7 @@ fn a_river_that_leaves_its_region_carries_on_in_the_next_from_where_it_left() {
             across.push([mouth[0], mouth[1] + 1.0]);
         }
         across.retain(|point| point.iter().all(|c| (-64.0..64.0).contains(c)));
-        let near = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) <= STEP;
+        let near = |a: [f32; 2], b: [f32; 2]| libm::hypotf(a[0] - b[0], a[1] - b[1]) <= STEP;
         // A river that ends where it joins another of its region does not leave it.
         let joins = rivers.iter().any(|other| {
             other.id != river.id

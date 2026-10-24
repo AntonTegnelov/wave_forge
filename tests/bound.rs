@@ -24,7 +24,7 @@ fn meets_disk(chunk: ChunkCoord) -> bool {
         let (low, high) = (at as f32 * 8.0, at as f32 * 8.0 + 8.0);
         0.0_f32.clamp(low, high)
     };
-    near(chunk.x).hypot(near(chunk.y)) <= 40.0
+    libm::hypotf(near(chunk.x), near(chunk.y)) <= 40.0
 }
 
 #[test]

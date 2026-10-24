@@ -108,8 +108,8 @@ fn the_coast_falls_into_the_ocean_before_the_bound_and_about_half_is_land() {
     let ring = (0..360).map(|degree| {
         let angle = (degree as f32).to_radians();
         [
-            CENTRE[0] + 1000.0 * angle.cos(),
-            CENTRE[1] + 1000.0 * angle.sin(),
+            CENTRE[0] + 1000.0 * libm::cosf(angle),
+            CENTRE[1] + 1000.0 * libm::sinf(angle),
         ]
     });
 
@@ -188,12 +188,12 @@ fn the_continents_rivers_sound_along_their_courses_as_loud_as_they_flow() {
             for curve in runtime.curves("rivers", chunk).expect("generated") {
                 for (k, pair) in curve.points.windows(2).enumerate() {
                     let (a, b) = (pair[0], pair[1]);
-                    let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+                    let length = libm::hypotf(b[0] - a[0], b[1] - a[1]);
                     let along = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
                     let t =
                         (((x - a[0]) * along[0] + (y - a[1]) * along[1]) / length).clamp(0.0, 1.0);
                     let (px, py) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
-                    let off = (px - x).hypot(py - y);
+                    let off = libm::hypotf(px - x, py - y);
                     if off < nearest.0 {
                         let radius = curve.values[k] + (curve.values[k + 1] - curve.values[k]) * t;
                         nearest = (off, radius, along);

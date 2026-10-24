@@ -123,7 +123,8 @@ fn every_rejection_names_the_modifier_that_failed() {
                     let crowded = report.iter().any(|other| {
                         !matches!(other.verdict, Err(reason) if reason != Rejection::Spacing)
                             && other.at != judged.at
-                            && (other.at[0] - judged.at[0]).hypot(other.at[1] - judged.at[1]) < 3.0
+                            && libm::hypotf(other.at[0] - judged.at[0], other.at[1] - judged.at[1])
+                                < 3.0
                     });
                     assert!(crowded || near_edge, "{judged:?}");
                 }

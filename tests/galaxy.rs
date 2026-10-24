@@ -211,7 +211,7 @@ fn a_bodys_row_drives_its_relief_zones_and_rocks() {
     for (i, a) in on_dry.iter().enumerate() {
         for b in &on_dry[i + 1..] {
             assert!(
-                (a[0] - b[0]).hypot(a[1] - b[1]) >= 3.0,
+                libm::hypotf(a[0] - b[0], a[1] - b[1]) >= 3.0,
                 "rocks at {a:?} and {b:?}"
             );
         }

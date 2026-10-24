@@ -105,7 +105,7 @@ pub fn river_emitters(
         let lengths: Vec<f32> = curve
             .points
             .windows(2)
-            .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
+            .map(|pair| libm::hypotf(pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]))
             .collect();
         let total: f32 = lengths.iter().sum();
         let radius_at = |segment: usize, t: f32| {
@@ -185,7 +185,7 @@ pub fn shore_emitters(
             if !shore {
                 continue;
             }
-            let near = (x as f32 + 0.5 - middle.0).hypot(y as f32 + 0.5 - middle.1);
+            let near = libm::hypotf(x as f32 + 0.5 - middle.0, y as f32 + 0.5 - middle.1);
             if best.is_none_or(|(nearest, ..)| near < nearest) {
                 best = Some((near, x, y));
             }

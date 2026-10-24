@@ -196,7 +196,7 @@ mod tests {
         // (cos, 0, -sin).
         let yaw = YUpSpace::yaw(1);
 
-        let turned = [yaw.cos(), 0.0, -yaw.sin()];
+        let turned = [libm::cosf(yaw), 0.0, -libm::sinf(yaw)];
 
         assert!(
             (turned[0]).abs() < 1e-6 && (turned[2] - 1.0).abs() < 1e-6,

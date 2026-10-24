@@ -257,7 +257,7 @@ mod tests {
     fn a_lake_is_level_and_never_below_its_ground() {
         let heights = ground([24, 20], |x, y| {
             let (fx, fy) = (x as f32, y as f32);
-            (fx * 0.9).sin() * 2.0 + (fy * 0.7).cos() * 2.0 + (fx * fy * 0.05).sin()
+            libm::sinf(fx * 0.9) * 2.0 + libm::cosf(fy * 0.7) * 2.0 + libm::sinf(fx * fy * 0.05)
         });
 
         let surface = lake_surface(&heights, [24, 20], -10.0, 1);

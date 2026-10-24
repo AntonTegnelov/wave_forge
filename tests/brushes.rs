@@ -182,7 +182,7 @@ fn a_remove_stroke_takes_every_point_near_its_path_and_none_further() {
     // Within the brush's radius of the path, its rounded ends included.
     let near = |at: [f32; 3]| {
         let x = at[0].clamp(4.5, 20.5);
-        (at[0] - x).hypot(at[1] - 8.5) < 2.0
+        libm::hypotf(at[0] - x, at[1] - 8.5) < 2.0
     };
     let before = all(&runtime);
 

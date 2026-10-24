@@ -136,7 +136,10 @@ fn a_kind_keeps_its_distance_from_its_own_kind_and_meets_its_conditions() {
         for b in &sites[i + 1..] {
             if kind(a) == "altar" && kind(b) == "altar" && region(a) == region(b) {
                 let (p, q) = (centre(a), centre(b));
-                assert!((p.0 - q.0).hypot(p.1 - q.1) >= 24.0, "{a:?} and {b:?}");
+                assert!(
+                    libm::hypotf(p.0 - q.0, p.1 - q.1) >= 24.0,
+                    "{a:?} and {b:?}"
+                );
             }
         }
         let (x, y) = centre(a);

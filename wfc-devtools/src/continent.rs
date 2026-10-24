@@ -141,7 +141,7 @@ pub fn history(pack: &Arc<Pack>) -> Vec<GivenRow> {
         .filter_map(|(culture, _)| tried.iter().find(|(.., c)| c == culture));
     let mut kept: Vec<([f32; 2], &str, u64)> = Vec::new();
     for &(h, at, culture) in firsts.chain(&tried) {
-        let apart = |other: &[f32; 2]| (other[0] - at[0]).hypot(other[1] - at[1]) >= 128.0;
+        let apart = |other: &[f32; 2]| libm::hypotf(other[0] - at[0], other[1] - at[1]) >= 128.0;
         if kept.iter().all(|(other, ..)| apart(other)) {
             kept.push((at, culture, h));
         }

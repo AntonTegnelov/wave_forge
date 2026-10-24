@@ -2,3 +2,6 @@
 ground d89453d9fd7f4cfa
 ring ad371ced28949978
 trees 21c2d1d87f26b870
+eroded 14320f145f04effc
+worn 56bc9420a4bf4d65
+sky 5f5c37b5feaed333
