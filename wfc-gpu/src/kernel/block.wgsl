@@ -50,6 +50,11 @@ const STATUS_BOUNDARY: u32 = 3u;
 const STATUS_BAD_CHECKPOINT: u32 = 4u;
 // A lower region of the same portfolio solved first, so this one stopped.
 const STATUS_SUPERSEDED: u32 = 5u;
+// The region swept far past its budget without deciding anything: a bug, never a result.
+const STATUS_HUNG: u32 = 6u;
+// Sweeps a step of work may take on average before the region counts as hung. The city's regions
+// take under four (docs/research/measurements.md, L62).
+const SWEEP_GUARD: u32 = 8u;
 
 // One cell's possible tiles, and everything that reads or writes one. KernelSpec::wgsl generates
 // these with the words written out; see the note on mask_prelude for why nothing loops over them.
@@ -92,6 +97,10 @@ struct Ctrl {
     // The most rounds this attempt has reached. Slot k is rewritten by round k + RING, so it is
     // only trustworthy while k + RING exceeds this.
     max_step: u32,
+    // Steps that decide something: every step but a sweep that leaves propagation still moving.
+    // How many sweeps reach a fixpoint depends on the order lanes ran in, so `steps` does too, and
+    // only this counts towards the budget.
+    work: u32,
 };
 
 @group(0) @binding(0) var<storage, read> rules: array<u32>;
@@ -283,7 +292,7 @@ fn solve_region(
     let id = ids[region];
     let seed = seeds[region];
     let base = region * CELLS * W;
-    var st = Ctrl(LOAD, 1u, STATUS_OK, 0u, NONE, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
+    var st = Ctrl(LOAD, 1u, STATUS_OK, 0u, NONE, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
     loop {
         // Per-lane work for the current state. No barriers in here.
         if (st.phase == LOAD) {
@@ -309,6 +318,7 @@ fn solve_region(
         if (lane == 0u) {
             var next = st;
             next.steps += 1u;
+            next.work += 1u;
             if (st.phase == LOAD) {
                 next.phase = PROPAGATE;
                 next.sweep = st.sweep + 1u;
@@ -355,6 +365,7 @@ fn solve_region(
                     }
                 } else if (moved != 0u) {
                     next.sweep = st.sweep + 1u;
+                    next.work = st.work;
                 } else if (params.mode == 0u) {
                     next.phase = WRITE;
                 } else if (params.radius > 0u) {
@@ -407,6 +418,7 @@ fn solve_region(
                 atomicStore(&stats[record + 5u], next.steps);
                 atomicStore(&stats[record + 6u], next.backtracks);
                 atomicStore(&stats[record + 7u], next.tries);
+                atomicStore(&stats[record + 8u], next.work);
             }
             // A region that has just solved tells the rest of its portfolio; one still working
             // stops if a lower region already has. The lowest region that solves is the same
@@ -421,8 +433,18 @@ fn solve_region(
                     next.phase = WRITE;
                 }
             }
-            // A hung shader resets the host's graphics driver, so every run has a hard step budget.
-            if (next.steps >= params.max_steps && next.phase < WRITE) {
+            // A hung shader resets the host's graphics driver, so every run has a hard budget. It
+            // counts work, which the region and its seed alone decide, so a region caps alike on
+            // every device; the sweeps between, whose number lane order decides, are bounded apart.
+            let running = next.phase != WRITE && next.phase != DONE;
+            var sweep_budget = NONE;
+            if (params.max_steps < NONE / SWEEP_GUARD) {
+                sweep_budget = params.max_steps * SWEEP_GUARD;
+            }
+            if (running && next.steps >= sweep_budget) {
+                next.status = STATUS_HUNG;
+                next.phase = WRITE;
+            } else if (running && next.work >= params.max_steps) {
                 next.status = STATUS_CAP;
                 next.phase = WRITE;
             }

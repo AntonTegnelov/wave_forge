@@ -153,10 +153,11 @@ impl Default for RepairPolicy {
             enabled: true,
             max_halo: 3,
             // Measured on the city (docs/research/measurements.md): every chunk a streamed world
-            // gave up on was placed by 32 seeds of this budget, in a dispatch of 50 ms at most.
+            // gave up on was placed by 32 seeds of this budget, in a dispatch of 50 ms at most. It
+            // was 20 000 steps with sweeps counted, which come to under four a step of work (L62).
             budget: SolveBudget {
                 max_attempts: 32,
-                max_steps: 20_000,
+                max_steps: 5_000,
             },
             seeds: 32,
         }

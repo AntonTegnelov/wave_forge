@@ -195,7 +195,7 @@ impl<S: Solver> WorldGenerator<S> {
             &self.store,
             &self.failed,
             &self.config.extent,
-            self.solver.max_batch(),
+            self.first_attempt_batch(),
         );
         if !batch.is_empty() {
             let halo = self.first_attempt_halo(batch[0].parity());
@@ -603,7 +603,7 @@ impl<S: Solver> WorldGenerator<S> {
         let shape = self.region_shape(halo);
         let region = Region::new(chunk, shape);
         let domains = self.region_init(&region, true);
-        let seeds = repair_seeds(self.config.seed, halo, self.repair_width());
+        let seeds = repair_seeds(self.config.seed, halo, self.repair_width(halo));
         let mut init = Domains::from_words(0, self.ruleset.words_per_cell(), Vec::new())
             .expect("an empty batch");
         for _ in &seeds {
@@ -669,7 +669,7 @@ impl<S: Solver> WorldGenerator<S> {
     #[must_use]
     pub fn kernel_shapes(&self, radius: u32) -> Vec<(u32, RegionShape)> {
         let largest = scheduler::largest_batch(radius, &self.config.extent)
-            .min(self.solver.max_batch())
+            .min(self.first_attempt_batch())
             .next_power_of_two();
         let mut firsts = vec![
             self.region_shape(self.first_attempt_halo(0)),
@@ -683,11 +683,10 @@ impl<S: Solver> WorldGenerator<S> {
                     .into_iter()
                     .map(move |shape| (regions, shape))
             });
-        let width = self.repair_width();
         let repairs = self
             .repair_halos()
             .into_iter()
-            .map(|halo| (width, self.region_shape(halo)));
+            .map(|halo| (self.repair_width(halo), self.region_shape(halo)));
         first_attempts.chain(repairs).collect()
     }
 
@@ -703,9 +702,26 @@ impl<S: Solver> WorldGenerator<S> {
         if parity == 1 { 0 } else { self.config.halo }
     }
 
-    /// How many seeds one repair tries: as many as the policy asks for and the solver takes.
-    fn repair_width(&self) -> u32 {
-        self.config.repair.seeds.clamp(1, self.solver.max_batch())
+    /// How many seeds one repair at `halo` tries: as many as the policy asks for and the solver
+    /// takes in a batch of its shape.
+    fn repair_width(&self, halo: u32) -> u32 {
+        self.config
+            .repair
+            .seeds
+            .clamp(1, self.solver.max_batch_for(self.region_shape(halo)).max(1))
+    }
+
+    /// The most chunks one batch of first attempts may hold, whichever parity it is of.
+    fn first_attempt_batch(&self) -> u32 {
+        [0, 1]
+            .map(|parity| {
+                self.solver
+                    .max_batch_for(self.region_shape(self.first_attempt_halo(parity)))
+            })
+            .into_iter()
+            .min()
+            .expect("two parities")
+            .max(1)
     }
 
     fn dispatch(

@@ -19,7 +19,16 @@ use wfc_rules::AdjacencyRules;
 
 /// What a region's statistics record looks like after a solve that succeeded in one step: the
 /// words a stale buffer could plausibly hold.
-const SOLVED_RECORD: [u32; STATS_WORDS as usize] = [0, 1, 1, 0, u32::MAX, 1, 0, 0];
+const SOLVED_RECORD: [u32; STATS_WORDS as usize] = [0, 1, 1, 0, u32::MAX, 1, 0, 0, 1];
+
+/// Words of a stale buffer laid out as the stats buffer is: the portfolio's word, then one solved
+/// record per region.
+fn stale(words: usize) -> Vec<u32> {
+    std::iter::once(u32::MAX)
+        .chain(SOLVED_RECORD.iter().copied().cycle())
+        .take(words)
+        .collect()
+}
 
 /// A backend whose device finishes every dispatch without running the kernel.
 struct NothingRuns;
@@ -37,6 +46,7 @@ impl ComputeBackend for NothingRuns {
             workgroup_storage: 32_768,
             invocations_per_workgroup: 256,
             workgroups: 65_535,
+            storage_binding: 1 << 27,
         }
     }
 
@@ -46,8 +56,7 @@ impl ComputeBackend for NothingRuns {
 
     fn create_buffer(&self, bytes: u64, _usage: BufferUsage) -> Result<Buffer, BackendError> {
         let words = usize::try_from(bytes / 4).expect("test buffers are small");
-        let stale = SOLVED_RECORD.iter().copied().cycle().take(words).collect();
-        Ok(Rc::new(RefCell::new(stale)))
+        Ok(Rc::new(RefCell::new(stale(words))))
     }
 
     fn create_binding(&self, _pipeline: &(), _buffers: &[&Buffer]) -> Result<(), BackendError> {
@@ -132,4 +141,18 @@ fn a_dispatch_that_never_ran_is_an_error_when_polled() {
         matches!(result, Err(SolverError::NoReport { region: 0 })),
         "a region the kernel never reported on must not be read as a result: {result:?}"
     );
+}
+
+// The tests above hold only while a stale buffer reads as solved regions, so the solver's clearing
+// of the records is what they test. A change to the record's layout must change this test too.
+#[test]
+fn a_stale_buffer_reads_as_a_solved_record_for_every_region() {
+    let words = stale(1 + 2 * STATS_WORDS as usize);
+
+    let records: Vec<&[u32]> = words[1..].chunks(STATS_WORDS as usize).collect();
+
+    for record in records {
+        assert_eq!(record[0], 0, "status Solved: {record:?}");
+        assert_ne!(record[5], 0, "a step taken: {record:?}");
+    }
 }

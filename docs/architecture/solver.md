@@ -111,7 +111,10 @@ as above. When the recovery budget runs out, the region comes back with a **stat
 error:
 
 - `Exhausted`: attempts used up;
-- `StepCap`: the hard step limit, which exists so a shader cannot hang a device;
+- `StepCap`: the hard step limit, which exists so a shader cannot hang a device. It counts steps of
+  work, every workgroup step but a sweep that leaves propagation still moving: how many sweeps a
+  fixpoint takes depends on the order the lanes ran in, so a budget counting them would cap a region
+  on one device and solve it on another, and a repair portfolio would keep a different seed;
 - `BorderContradiction`: propagating the starting domains alone empties a cell, so no arrangement
   satisfies the borders;
 - `Superseded`: in a portfolio of seeds, a lower seed solved first, so this one stopped.
@@ -201,8 +204,10 @@ library's. Which adapters the dev container and CI use is in
   the maximal preset, 135 tiles, fits an 8×8×6 chunk with a halo of 1 only that way (K36). Bigger
   chunks still would need domains in a storage buffer, which nothing needs yet.
 - **A dispatch is capped in steps.** A shader that does not terminate takes the display driver with
-  it (Windows resets a device after about two seconds), so a region has a hard step budget and
-  reports `StepCap` rather than running on.
+  it (Windows resets a device after about two seconds), so a region has a hard budget of steps of
+  work and reports `StepCap` rather than running on. The city's regions sweep under four steps a
+  step of work ([measurements.md](../research/measurements.md) L62), and one that sweeps eight times
+  its budget without settling fails its batch as a solver error, since the rules cannot cause it.
 - **Kernels are compiled once per region shape, ahead of time where possible, and cached across
   runs.** One pipeline takes seconds to compile on some drivers, which would otherwise look like a
   seconds-long solve. A pipeline depends on the region shape alone, so every batch size of one

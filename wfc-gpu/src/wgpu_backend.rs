@@ -4,8 +4,10 @@
 //! shares the engine's device instead of competing with it for the GPU. A standalone program or a
 //! test uses [`WgpuBackend::from_env`].
 //!
-//! Compiling a kernel takes seconds on some drivers, so a backend can keep compiled pipelines in a
-//! file with [`WgpuBackend::cache_pipelines_in`]: a later run on the same adapter starts from them.
+//! Compiling a kernel takes seconds on some drivers, so a backend can keep compiled pipelines in
+//! files with [`WgpuBackend::cache_pipelines_in`]: a later run on the same adapter starts from them.
+//! Each kernel has a file of its own, named for the adapter and the kernel's source, so backends of
+//! several rule sets, or several processes, sharing a directory never overwrite each other's.
 //! A driver is meant to refuse a cache an older version of it wrote, and native Vulkan drivers do,
 //! but dozen, Vulkan over Direct3D 12, keeps its own identity when the Direct3D 12 driver under it
 //! is updated; that driver then fails on the stale pipelines, as out of memory, and loses the
@@ -21,10 +23,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 const WANTED_WORKGROUP_STORAGE: u32 = 32_768;
 /// The invocations per workgroup the solver asks for.
 const WANTED_INVOCATIONS: u32 = 512;
-/// Storage buffers the kernel binds, which is more than the eight a default device promises.
-const STORAGE_BUFFERS: u32 = 10;
-
-/// Numbers each partial cache file, so writers on several threads never share one.
+/// Numbers each partial cache file, so writers on several threads never share one; the process id
+/// beside it keeps processes apart.
 static PARTIALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Compute on wgpu.
@@ -35,19 +35,22 @@ pub struct WgpuBackend {
     limits: BackendLimits,
     /// The adapter behind the device, when this backend chose it.
     adapter: Option<wgpu::AdapterInfo>,
-    /// Compiled pipelines kept across runs, and the file they are kept in.
-    cache: Option<(wgpu::PipelineCache, PathBuf)>,
-    /// Whether the driver failed on the cache: its file is deleted, and the stale data it holds is
-    /// never written again, even by a pipeline another thread makes on the lost device.
-    /// Held while the cache file is written or deleted, so a pipeline made on another thread
-    /// never writes it back between the flag being set and the file going.
+    /// The directory compiled pipelines are kept in across runs, and the adapter's key their files
+    /// are named by.
+    cache: Option<(PathBuf, String)>,
+    /// Whether the driver failed on a cache: its file is deleted, and no cache is written again,
+    /// even by a pipeline another thread makes on the lost device.
+    /// Held while a cache file is written or deleted, so a pipeline made on another thread
+    /// never writes one back between the flag being set and the file going.
     stale_cache: Mutex<bool>,
 }
 
-/// Work submitted to wgpu, and how many of its readbacks have been mapped.
+/// Work submitted to wgpu, how many of its readbacks have been mapped, and why the first that
+/// could not be was not.
 #[derive(Debug)]
 pub struct WgpuSubmission {
     mapped: Arc<AtomicUsize>,
+    failed: Arc<Mutex<Option<String>>>,
     readbacks: usize,
 }
 
@@ -85,9 +88,9 @@ impl WgpuBackend {
             max_compute_workgroup_size_x: offered
                 .max_compute_workgroup_size_x
                 .min(WANTED_INVOCATIONS),
-            max_storage_buffers_per_shader_stage: offered
-                .max_storage_buffers_per_shader_stage
-                .max(STORAGE_BUFFERS),
+            // A full batch of a large rule set's checkpoints passes the default 128 MiB.
+            max_storage_buffer_binding_size: offered.max_storage_buffer_binding_size,
+            max_buffer_size: offered.max_buffer_size,
             ..wgpu::Limits::default()
         };
         // Asked for where offered, so pipelines can be cached across runs.
@@ -113,6 +116,9 @@ impl WgpuBackend {
             workgroup_storage: granted.max_compute_workgroup_storage_size,
             invocations_per_workgroup: granted.max_compute_invocations_per_workgroup,
             workgroups: granted.max_compute_workgroups_per_dimension,
+            storage_binding: granted
+                .max_storage_buffer_binding_size
+                .min(granted.max_buffer_size),
         };
         Self {
             device,
@@ -124,14 +130,14 @@ impl WgpuBackend {
         }
     }
 
-    /// Keeps compiled pipelines in a file in `dir`, named for the adapter and driver, loading what
-    /// an earlier run on them left there and writing it again after every compile. A backend that
-    /// cannot cache (an engine's device, whose adapter it does not know, a device without the
-    /// feature, or a graphics API wgpu does not cache on) is returned as it is;
-    /// [`WgpuBackend::caches_pipelines`] says which.
+    /// Keeps compiled pipelines in files in `dir`, one a kernel, named for the adapter, the driver
+    /// and the kernel's source, loading what an earlier run on them left there and writing it again
+    /// after every compile. A backend that cannot cache (an engine's device, whose adapter it does
+    /// not know, a device without the feature, or a graphics API wgpu does not cache on) is
+    /// returned as it is; [`WgpuBackend::caches_pipelines`] says which.
     ///
     /// # Errors
-    /// [`BackendError::Cache`] if the directory cannot be made or an existing file cannot be read.
+    /// [`BackendError::Cache`] if the directory cannot be made.
     pub fn cache_pipelines_in(mut self, dir: &Path) -> Result<Self, BackendError> {
         let Some(key) = self
             .adapter
@@ -145,16 +151,44 @@ impl WgpuBackend {
         else {
             return Ok(self);
         };
-        let path = dir.join(key);
-        let cache_error = |reason: std::io::Error| BackendError::Cache {
-            path: path.display().to_string(),
+        std::fs::create_dir_all(dir).map_err(|reason| BackendError::Cache {
+            path: dir.display().to_string(),
             reason: reason.to_string(),
+        })?;
+        self.cache = Some((dir.to_owned(), key));
+        Ok(self)
+    }
+
+    /// The cache for the kernel `wgsl` at `entry`, and the file it is kept in, from what an earlier
+    /// run left there.
+    ///
+    /// # Errors
+    /// [`BackendError::Cache`] if an existing file cannot be read.
+    fn pipeline_cache(
+        &self,
+        wgsl: &str,
+        entry: &str,
+    ) -> Result<Option<(wgpu::PipelineCache, PathBuf)>, BackendError> {
+        let Some((dir, key)) = &self.cache else {
+            return Ok(None);
         };
-        std::fs::create_dir_all(dir).map_err(cache_error)?;
+        // FNV-1a over the source and the entry point: a kernel's file holds only its pipeline.
+        let source = [wgsl.as_bytes(), b"\0", entry.as_bytes()].concat();
+        let hash = source
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, &byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            });
+        let path = dir.join(format!("{key}-{hash:016x}"));
         let data = match std::fs::read(&path) {
             Ok(data) => Some(data),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(cache_error(error)),
+            Err(reason) => {
+                return Err(BackendError::Cache {
+                    path: path.display().to_string(),
+                    reason: reason.to_string(),
+                });
+            }
         };
         // SAFETY: wgpu requires the data to come from an earlier cache of this adapter. The file is
         // named by `pipeline_cache_key`, from the adapter's vendor and device, so only such a cache
@@ -168,11 +202,10 @@ impl WgpuBackend {
                     fallback: true,
                 })
         };
-        self.cache = Some((cache, path));
-        Ok(self)
+        Ok(Some((cache, path)))
     }
 
-    /// Whether compiled pipelines are kept in a file across runs.
+    /// Whether compiled pipelines are kept in files across runs.
     #[must_use]
     pub const fn caches_pipelines(&self) -> bool {
         self.cache.is_some()
@@ -205,7 +238,24 @@ impl WgpuBackend {
     }
 }
 
-/// The first adapter whose name contains `wanted`, ignoring case.
+/// Whether every readback of a submission whose mappings have all completed was mapped.
+///
+/// # Errors
+/// [`BackendError::Readback`] with why the first that failed was not, a lost device say.
+fn mapped_all(submission: &WgpuSubmission) -> Result<(), BackendError> {
+    match submission
+        .failed
+        .lock()
+        .expect("no thread panics holding the lock")
+        .as_ref()
+    {
+        Some(reason) => Err(BackendError::Readback(format!(
+            "a readback could not be mapped: {reason}"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The process's one wgpu instance, made on first use and never dropped. Dropping the last
 /// instance lets the Vulkan loader unload its driver while a thread that used a device of it may
 /// still be ending, and that thread's thread-local destructors, the driver's code, then fault as it
@@ -217,6 +267,7 @@ fn instance() -> &'static wgpu::Instance {
     })
 }
 
+/// The first adapter whose name contains `wanted`, ignoring case.
 fn adapter_named(instance: &wgpu::Instance, wanted: &str) -> Result<wgpu::Adapter, BackendError> {
     let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
     let wanted_lower = wanted.to_lowercase();
@@ -249,6 +300,7 @@ impl ComputeBackend for WgpuBackend {
     }
 
     fn create_pipeline(&self, wgsl: &str, entry: &str) -> Result<Self::Pipeline, BackendError> {
+        let cache = self.pipeline_cache(wgsl, entry)?;
         // Errors reach the device's error scopes rather than this call, so the scopes are what the
         // caller is told about: a kernel that does not compile must not look like a working one,
         // and a driver out of memory must not end the process.
@@ -272,7 +324,7 @@ impl ComputeBackend for WgpuBackend {
                 module: &module,
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: self.cache.as_ref().map(|(cache, _)| cache),
+                cache: cache.as_ref().map(|(cache, _)| cache),
             });
         // Popped innermost first; the first error the driver gave is the one reported.
         let mut first = None;
@@ -281,7 +333,7 @@ impl ComputeBackend for WgpuBackend {
                 first.get_or_insert(error);
             }
         }
-        match (first, &self.cache) {
+        match (first, &cache) {
             (None, _) => {}
             (
                 Some(error @ (wgpu::Error::OutOfMemory { .. } | wgpu::Error::Internal { .. })),
@@ -311,13 +363,15 @@ impl ComputeBackend for WgpuBackend {
             .stale_cache
             .lock()
             .expect("no thread panics holding the lock");
-        if let Some((cache, path)) = &self.cache
+        if let Some((cache, path)) = &cache
             && !*stale
             && let Some(data) = cache.get_data()
         {
-            // Written beside the file and renamed over it, so a crash never leaves half a cache.
+            // Written beside the file and renamed over it, so a crash never leaves half a cache,
+            // under a name no other thread or process writing the same kernel uses.
             let partial = path.with_extension(format!(
-                "partial.{}",
+                "partial.{}.{}",
+                std::process::id(),
                 PARTIALS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             std::fs::write(&partial, data)
@@ -348,12 +402,32 @@ impl ComputeBackend for WgpuBackend {
             BufferUsage::Uniform => wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             BufferUsage::Readback => wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         };
-        Ok(self.device.create_buffer(&wgpu::BufferDescriptor {
+        // As for a pipeline, an allocation's failure reaches the device's error scopes, and outside
+        // one it would end the process.
+        let scopes = [
+            wgpu::ErrorFilter::Validation,
+            wgpu::ErrorFilter::OutOfMemory,
+        ]
+        .map(|filter| self.device.push_error_scope(filter));
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: bytes,
             usage,
             mapped_at_creation: false,
-        }))
+        });
+        let mut first = None;
+        for scope in scopes.into_iter().rev() {
+            if let Some(error) = pollster::block_on(scope.pop()) {
+                first.get_or_insert(error);
+            }
+        }
+        match first {
+            Some(error) => Err(BackendError::Buffer {
+                bytes,
+                reason: error.to_string(),
+            }),
+            None => Ok(buffer),
+        }
     }
 
     fn create_binding(
@@ -413,16 +487,22 @@ impl ComputeBackend for WgpuBackend {
         // Mapping is queued behind the submission, so the count reaching the readbacks is what says
         // the dispatch is done. It is the only completion signal that does not block.
         let mapped = Arc::new(AtomicUsize::new(0));
+        let failed = Arc::new(Mutex::new(None));
         for (_, to) in readbacks {
-            let mapped = Arc::clone(&mapped);
+            let (mapped, failed) = (Arc::clone(&mapped), Arc::clone(&failed));
             to.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-                if result.is_ok() {
-                    mapped.fetch_add(1, Ordering::Release);
+                if let Err(error) = result {
+                    failed
+                        .lock()
+                        .expect("no thread panics holding the lock")
+                        .get_or_insert(error.to_string());
                 }
+                mapped.fetch_add(1, Ordering::Release);
             });
         }
         Ok(WgpuSubmission {
             mapped,
+            failed,
             readbacks: readbacks.len(),
         })
     }
@@ -431,7 +511,10 @@ impl ComputeBackend for WgpuBackend {
         self.device
             .poll(wgpu::PollType::Poll)
             .map_err(|error| BackendError::Dispatch(error.to_string()))?;
-        Ok(submission.mapped.load(Ordering::Acquire) >= submission.readbacks)
+        if submission.mapped.load(Ordering::Acquire) < submission.readbacks {
+            return Ok(false);
+        }
+        mapped_all(submission).map(|()| true)
     }
 
     fn wait(&self, submission: &Self::Submission) -> Result<(), BackendError> {
@@ -443,7 +526,7 @@ impl ComputeBackend for WgpuBackend {
                 "the device finished but a readback was not mapped".to_owned(),
             ));
         }
-        Ok(())
+        mapped_all(submission)
     }
 
     fn read(&self, readback: &Self::Buffer, words: &mut [u32]) -> Result<(), BackendError> {

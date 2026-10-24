@@ -178,6 +178,7 @@ impl ReferenceSolver {
             domains.set(cell, TileMask::single(tile));
             stats.collapses += 1;
             stats.steps += 1;
+            stats.work += 1;
             stack.push(cell);
             let mut failure = self.propagate(shape, &mut domains, &mut stack).err();
             while let Some(cell) = failure {
@@ -204,6 +205,7 @@ impl ReferenceSolver {
                 };
                 stack.clear();
                 stats.steps += 1;
+                stats.work += 1;
                 // Every tile of that cell is now ruled out, so the mistake lies further back.
                 if narrowed.is_empty() {
                     failure = Some(banned_cell);
