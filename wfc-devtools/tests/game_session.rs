@@ -347,7 +347,9 @@ fn play() -> Result<Session, String> {
             .extent(WorldExtent::new(CHUNK).with_z(0..1))
             .halo(1)
             .build()?;
-        kernels::warm(&mut world, GENERATE_RADIUS);
+        // Reported through the worker, so a kernel that does not compile fails the load with its
+        // error instead of a load that never finishes.
+        kernels::warm(&mut world, GENERATE_RADIUS)?;
         Ok(world)
     });
     let mut tracker = Tracker::new(&city);

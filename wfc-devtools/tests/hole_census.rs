@@ -51,7 +51,7 @@ fn census_of_the_chunks_a_city_gives_up_on() {
             .halo(1)
             .build()
             .expect("a compute device");
-        kernels::warm(&mut generator, 8);
+        kernels::warm(&mut generator, 8).expect("the kernels compile");
         generator.request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 8)]);
         let events = generator.run_until_idle().expect("the solver runs");
         let given_up: Vec<(ChunkCoord, RegionStatus)> = events
