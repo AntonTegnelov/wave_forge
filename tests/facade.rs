@@ -203,6 +203,38 @@ fn an_imported_chunk_is_reported_updated_with_the_tiles_it_was_given() {
 }
 
 #[test]
+fn running_until_idle_reports_a_chunk_imported_before_it() {
+    let mut world = world(false);
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the reference solves");
+    let coord = ChunkCoord::new(1, 1, 0);
+    world
+        .import(imported(coord))
+        .expect("a chunk of the world's shape");
+
+    let events = world.run_until_idle().expect("nothing left to generate");
+
+    assert!(events.contains(&ChunkEvent::Updated(coord)), "{events:?}");
+}
+
+#[test]
+fn a_chunk_imported_and_then_evicted_is_not_reported_updated() {
+    let mut world = world(false);
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the reference solves");
+    let coord = ChunkCoord::new(0, 0, 0);
+    world
+        .import(imported(coord))
+        .expect("a chunk of the world's shape");
+
+    let evicted = world.evict_outside(&[FocusPoint::new(ChunkCoord::new(2, 2, 0), 0)], 0);
+    let events = world.poll().expect("nothing in flight");
+
+    assert!(evicted.iter().any(|chunk| chunk.coord == coord));
+    assert!(!events.contains(&ChunkEvent::Updated(coord)), "{events:?}");
+}
+
+#[test]
 fn an_import_holding_a_tile_the_rule_set_lacks_is_refused_and_changes_nothing() {
     let mut world = world(false);
     world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);

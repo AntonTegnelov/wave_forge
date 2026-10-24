@@ -356,6 +356,9 @@ impl<S: Solver> WorldGenerator<S> {
         loop {
             self.tick()?;
             if self.pending.is_none() {
+                // The last tick may have restored chunks, and an import before the call reports
+                // its chunk with the next events.
+                events.append(&mut self.events);
                 return Ok(events);
             }
             events.extend(self.wait()?);
@@ -435,12 +438,17 @@ impl<S: Solver> WorldGenerator<S> {
 
     /// Drops the chunks further than `margin` beyond every focus point and hands them back. A chunk
     /// asked for again comes back with the tiles it had, repairs included (see the determinism
-    /// contract in the crate documentation), so a game need not keep them. Chunks a queued repair
-    /// still has to see stay, or they would be generated again at once. A frozen world keeps each
+    /// contract in the crate documentation), so a game need not keep them. Chunks a queued or
+    /// running repair still has to see stay, or they would be generated again at once, or, in a
+    /// frozen world, kept without the repair's rewrite. A frozen world keeps each
     /// in its store first; if the store fails, the chunk and those after it stay in memory, and
     /// the next [`tick`](Self::tick) or [`poll`](Self::poll) reports the failure.
     pub fn evict_outside(&mut self, focus: &[FocusPoint], margin: u32) -> Vec<Chunk> {
-        let needed = self.repair_needs(&self.active_repairs());
+        let mut repairs = self.active_repairs();
+        if let Some(pending) = self.pending.as_ref().filter(|pending| pending.release) {
+            repairs.extend(&pending.chunks);
+        }
+        let needed = self.repair_needs(&repairs);
         let far: Vec<ChunkCoord> = self
             .store
             .iter()
@@ -469,8 +477,15 @@ impl<S: Solver> WorldGenerator<S> {
             self.layers.forget(coord);
             self.repaired.remove(&coord);
             self.replays.remove(&coord);
+            // Kept in the store now, so it is restored from there when asked for again.
+            self.not_stored.remove(&coord);
             evicted.extend(self.store.remove(coord));
         }
+        // An update not yet reported is of a chunk no longer held.
+        self.events.retain(|event| {
+            !matches!(event, ChunkEvent::Updated(coord)
+                if evicted.iter().any(|chunk: &Chunk| chunk.coord == *coord))
+        });
         evicted
     }
 
