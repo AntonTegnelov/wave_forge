@@ -182,7 +182,7 @@ fn a_bound_that_holds_nothing_is_refused() {
             r#"(version: 1, bound: Some({bound}), stages: [])"#
         ));
         assert!(
-            matches!(result, Err(PackError::Bound(_) | PackError::Syntax(_))),
+            matches!(result, Err(PackError::Bound(_))),
             "{bound}: {result:?}"
         );
     }
