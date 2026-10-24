@@ -1,0 +1,11 @@
+(
+    tiles: [
+        ( name: "A", weight: 1.0 ),
+        ( name: "B", weight: 1.0 ),
+    ],
+    adjacency: [
+        ("A", "B", "+x"), // no ("B", "A", "-x")
+        ("A", "A", "+x"),
+        ("A", "A", "-x"),
+    ]
+)

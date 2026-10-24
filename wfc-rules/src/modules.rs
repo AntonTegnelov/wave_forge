@@ -11,7 +11,7 @@
 //! `0 = +x`, `1 = -x`, `2 = +y`, `3 = -y`, `4 = +z` (up), `5 = -z` (down). Rotations are quarter
 //! turns counter-clockwise around `+z`.
 
-use crate::types::{AdjacencyRules, TileSet, TileSetError, Transformation};
+use crate::types::{AdjacencyRules, TileSet, TileSetError};
 use std::collections::{BTreeSet, HashMap};
 use thiserror::Error;
 
@@ -560,36 +560,28 @@ impl ModuleSet {
             .collect();
 
         let mut tuples = Vec::new();
+        // Whether each variant's face along each axis meets some face, marked as tuples are found.
+        let mut matched = vec![false; variants.len() * NUM_AXES];
         for (a, &va) in variants.iter().enumerate() {
             for (b, &vb) in variants.iter().enumerate() {
                 for axis in 0..NUM_AXES {
                     if self.may_touch(va, vb, axis, &index_by_name) {
                         tuples.push((axis, a, b));
+                        matched[a * NUM_AXES + axis] = true;
                     }
                 }
             }
         }
-
-        let mut unmatched_faces = Vec::new();
-        for a in 0..variants.len() {
-            for axis in 0..NUM_AXES {
-                if !tuples
-                    .iter()
-                    .any(|&(t_axis, t_a, _)| t_axis == axis && t_a == a)
-                {
-                    unmatched_faces.push((a, axis));
-                }
-            }
-        }
+        let unmatched_faces: Vec<(usize, usize)> = (0..variants.len())
+            .flat_map(|a| (0..NUM_AXES).map(move |axis| (a, axis)))
+            .filter(|&(a, axis)| !matched[a * NUM_AXES + axis])
+            .collect();
 
         let weights: Vec<f32> = variants
             .iter()
             .map(|v| self.prototypes[v.prototype].weight)
             .collect();
-        let tileset = TileSet::new(
-            weights,
-            vec![vec![Transformation::Identity]; variants.len()],
-        )?;
+        let tileset = TileSet::new(weights)?;
         let rules = AdjacencyRules::from_allowed_tuples(variants.len(), NUM_AXES, tuples);
 
         Ok(CompiledModules {
@@ -980,6 +972,6 @@ mod tests {
             .compile()
             .unwrap();
         assert_eq!(compiled.tileset.weights, vec![0.5, 3.0]);
-        assert_eq!(compiled.tileset.num_transformed_tiles(), 2);
+        assert_eq!(compiled.tileset.num_tiles(), 2);
     }
 }
