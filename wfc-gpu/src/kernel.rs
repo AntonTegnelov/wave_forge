@@ -12,7 +12,7 @@ use wfc_core::{RegionShape, Ruleset};
 
 /// Words of statistics the kernel writes per region: status, sweeps, collapses, restarts,
 /// contradiction cell, steps, backtracks, tries.
-pub const STATS_WORDS: u32 = 8;
+pub const STATS_WORDS: u32 = 9;
 /// The kernel's entry point.
 pub const ENTRY: &str = "solve_region";
 /// Bytes of workgroup memory the control block and the shared flags take.
@@ -37,8 +37,10 @@ pub struct SolverConfig {
     pub radius: u32,
     /// Attempts at a region before it is reported as exhausted.
     pub max_attempts: u32,
-    /// Workgroup-wide steps a region may take. A hung shader resets the host's display driver, so
-    /// this is a hard budget rather than a guess.
+    /// Steps of work a region may take: every workgroup-wide step but a sweep that leaves
+    /// propagation still moving, so the budget caps a region alike on every device and invocation
+    /// count. A hung shader resets the host's display driver, so this is a hard budget rather than
+    /// a guess, and a region that sweeps past eight times it without settling fails the batch.
     pub max_steps: u32,
     /// Checkpoints kept per region for undo.
     pub ring: u32,
@@ -57,7 +59,7 @@ impl Default for SolverConfig {
             invocations: 256,
             radius: 1,
             max_attempts: 64,
-            max_steps: 50_000,
+            max_steps: 12_500,
             ring: 32,
             max_batch: 256,
             shared_rules: true,

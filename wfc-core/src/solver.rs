@@ -19,7 +19,8 @@ use thiserror::Error;
 pub struct SolveBudget {
     /// Attempts at a region before it is reported as exhausted.
     pub max_attempts: u32,
-    /// Steps a region may take, whatever a step means to the solver.
+    /// Steps of work a region may take, whatever a step means to the solver, counted only in what
+    /// the region and its seed decide ([`RegionStats::work`]).
     pub max_steps: u32,
 }
 
@@ -99,7 +100,14 @@ pub struct RegionStats {
     pub steps: u32,
     /// Contradictions met, including those recovered from.
     pub tries: u32,
-    /// Where the last contradiction emptied a cell, as an index into the region.
+    /// The steps a solver's budget counts, which depend only on the region and its seed: on the
+    /// GPU every step but a sweep that leaves propagation still moving, whose number depends on the
+    /// order the lanes ran in; on the reference solver its rounds.
+    pub work: u32,
+    /// A cell the last contradiction emptied, as an index into the region: a diagnostic. On the
+    /// GPU it is the lowest cell found empty in the sweep that first met the contradiction, and
+    /// which cells a sweep has emptied by then depends on the order its lanes ran in, so it can
+    /// differ between runs and devices although the result never does.
     pub contradiction_cell: Option<u32>,
 }
 

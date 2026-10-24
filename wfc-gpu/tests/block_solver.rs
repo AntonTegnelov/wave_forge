@@ -527,3 +527,46 @@ fn one_region_shape_compiles_one_pipeline_whatever_the_batch_sizes() {
         solver.compilation()
     );
 }
+
+// How many sweeps reach a fixpoint depends on the order the lanes run in, so a budget counting
+// them would cap a region at one invocation count and solve it at another, and a repair portfolio
+// would keep a different seed. The budget counts work, which the region and its seed decide.
+#[test]
+fn a_tight_budget_caps_the_same_regions_at_every_invocation_count() {
+    let chunk = OneChunk::city(ChunkShape::cube(8));
+    let runs: Vec<(u32, u32)> = (0..32).map(|seed| (0, seed * 7919 + 1)).collect();
+    let solve = |invocations: u32| {
+        let config = SolverConfig {
+            invocations,
+            ..SolverConfig::default()
+        };
+        let mut solver = chunk.solver(config);
+        let batch = RegionBatch {
+            budget: Some(SolveBudget {
+                max_attempts: 64,
+                max_steps: TIGHT_WORK,
+            }),
+            ..chunk.batch(&runs)
+        };
+        let job = solver.start(batch).expect("a well-formed batch");
+        solver.wait(job).expect("the dispatch finishes")
+    };
+
+    let (narrow, wide) = (solve(64), solve(256));
+
+    assert_eq!(narrow.statuses, wide.statuses);
+    assert_eq!(narrow.domains, wide.domains);
+    let capped = narrow
+        .statuses
+        .iter()
+        .filter(|status| **status == RegionStatus::StepCap)
+        .count();
+    assert!(
+        0 < capped && capped < runs.len(),
+        "the budget caps some regions and not others: {capped} of {}",
+        runs.len()
+    );
+}
+
+/// A budget of work that caps some of the city's seeds on a lone chunk and not others.
+const TIGHT_WORK: u32 = 300;

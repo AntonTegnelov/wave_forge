@@ -372,6 +372,14 @@ impl<B: ComputeBackend> BlockSolver<B> {
                 // cause: it is a bug in the checkpoint ring, so it fails the batch loudly.
                 4 => return Err(SolverError::BadCheckpoint { region }),
                 5 => RegionStatus::Superseded,
+                // Sweeps far past the budget without deciding anything: propagation that does not
+                // settle, which the rules cannot cause.
+                6 => {
+                    return Err(SolverError::Backend(format!(
+                        "region {region} swept {} steps for {} steps of work without settling",
+                        record[STEPS], record[8]
+                    )));
+                }
                 status => {
                     return Err(SolverError::Backend(format!(
                         "region {region} reported status {status}, which the kernel never writes"
@@ -385,6 +393,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
                 steps: record[STEPS],
                 backtracks: record[6],
                 tries: record[7],
+                work: record[8],
                 contradiction_cell: (record[4] != u32::MAX).then_some(record[4]),
             });
         }
