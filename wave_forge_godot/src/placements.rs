@@ -152,6 +152,11 @@ impl Placements {
         self.bindings.keys().cloned().collect()
     }
 
+    /// Every placed chunk, by its stage.
+    pub(crate) fn held(&self) -> Vec<(String, ChunkCoord)> {
+        self.placed.keys().cloned().collect()
+    }
+
     /// A stage's chunk has arrived: it is placed in a later frame.
     pub(crate) fn arrived(&mut self, stage: &str, chunk: ChunkCoord) {
         self.due.insert((stage.to_owned(), chunk));

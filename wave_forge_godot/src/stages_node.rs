@@ -1065,10 +1065,29 @@ impl INode for WaveForgeStages {
     }
 
     /// Frees the ground's meshes and the bodies, which belong to the rendering and physics
-    /// servers rather than to the node.
+    /// servers rather than to the node. What was drawn is drawn again, from the products the
+    /// stages' thread still holds, if the node comes back into the tree.
     fn exit_tree(&mut self) {
+        let grounds: Vec<ChunkCoord> = self.grounds.keys().copied().collect();
+        let far: Vec<ChunkCoord> = self.far_built.keys().copied().collect();
+        let surfaces = [&self.rock, &self.fluid].map(|layer| {
+            layer
+                .as_ref()
+                .map(|layer| layer.built.keys().copied().collect::<Vec<_>>())
+        });
+        let placed = self.placements.held();
         self.clear_ground_and_bodies();
         self.audio.stop();
+        self.ground_due.extend(grounds);
+        self.far_due.extend(far);
+        for (layer, chunks) in [&mut self.rock, &mut self.fluid].into_iter().zip(surfaces) {
+            if let (Some(layer), Some(chunks)) = (layer, chunks) {
+                layer.due.extend(chunks);
+            }
+        }
+        for (stage, chunk) in placed {
+            self.placements.arrived(&stage, chunk);
+        }
     }
 
     fn get_configuration_warnings(&self) -> PackedStringArray {
