@@ -53,9 +53,9 @@ use wave_forge::noise::{
 use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, Judgement, MAX_CATEGORIES, Pack, Painting, ParamDef,
-    Point, PointId, Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId, StageError,
-    StageEvent, StageKind, StageTiming, StageWorker, TableKind, Value,
+    AmbienceKind, Column, Edit, Edits, Facts, GivenRow, Judgement, MAX_CATEGORIES, Pack, Painting,
+    ParamDef, Point, PointId, Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId,
+    StageError, StageEvent, StageKind, StageTiming, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -1261,6 +1261,43 @@ impl INode for WaveForgeStages {
                 | StageEvent::Judged { .. } => {}
             }
         }
+        // Decals and sounds are built from curve and field stages, which can be generated again,
+        // a road given anew say, while the ground under them stays: those chunks are built again
+        // too. A sound's emitters read the field around their chunk, so its neighbours with it.
+        let decal_stages: Vec<String> = self
+            .curve_decals
+            .keys_shared()
+            .map(|stage| stage.to_string())
+            .collect();
+        let sound_stages: Vec<String> = self
+            .pack
+            .as_ref()
+            .map(|pack| {
+                pack.ambience()
+                    .iter()
+                    .flat_map(|def| match &def.kind {
+                        AmbienceKind::River { curves, height } => [curves.clone(), height.clone()],
+                        AmbienceKind::Lake { lakes, height } => [lakes.clone(), height.clone()],
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (mut decals_changed, mut sounds_changed) = (Vec::new(), Vec::new());
+        for event in &events {
+            let (StageEvent::Generated { stage, chunk } | StageEvent::Dropped { stage, chunk }) =
+                event
+            else {
+                continue;
+            };
+            if decal_stages.contains(stage) {
+                decals_changed.push(*chunk);
+            }
+            if sound_stages.contains(stage) {
+                sounds_changed.extend((-1..=1).flat_map(|dy| {
+                    (-1..=1).map(move |dx| ChunkCoord::new(chunk.x + dx, chunk.y + dy, chunk.z))
+                }));
+            }
+        }
         if let Some(save) = save {
             self.signals()
                 .saved()
@@ -1340,8 +1377,10 @@ impl INode for WaveForgeStages {
         self.slowest_navigation_ms = self.slowest_navigation_ms.max(frame.navigation_ms);
         self.update_occluders(&towns);
         self.update_grass();
-        self.update_audio(&near_changed);
-        self.update_decals(&near_changed);
+        sounds_changed.extend_from_slice(&near_changed);
+        decals_changed.extend_from_slice(&near_changed);
+        self.update_audio(&sounds_changed);
+        self.update_decals(&decals_changed);
         let placing = std::time::Instant::now();
         self.give_mesh_shapes();
         frame.placed = self.update_placements();
