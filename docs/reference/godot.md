@@ -197,7 +197,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `edits_text` | the edits of the world as text, `edits_log`'s, which the scene saves and `start` applies: what brushes painted in the editor |
 | World | `seed` | every choice derives from it |
 | | `chunk_cells` | columns per chunk along the lattice's x and y, and a town chunk's height along z |
-| | `cell_size` | one cell in Godot's world units |
+| | `cell_size` | one cell in Godot's world units, positive along every axis, which `start` checks |
 | Streaming | `view_radius` | chunks kept generated around the followed position; the ground is drawn on each of them, its height, material, channel and water stages generated a chunk further, since a chunk's ground reads the chunks beyond its +x and +y edges |
 | | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off. In the editor the plugin follows the editor's camera instead |
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
@@ -265,7 +265,10 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   WFC lattice, whatever the stage's scale: a coarse stage generates the chunks of its own that
   cover them (`Runtime::request_each`). The other targets keep `view_radius`.
 - `start()` loads the pack and the rule sets and starts the stages' thread, where a town solver
-  builds its device.
+  builds its device. Called again, it replaces the running world and everything drawn from it. A
+  pack, rule set, noise, fact, parameter, edit or scene it refuses leaves the running world as it
+  was; ground textures, materials or grass it refuses leave the node stopped. Changing `chunk_cells`, `cell_size` or a ground, far ground, volume, fluid or grass stage
+  while the world runs starts it again, so nothing drawn mixes the old settings with the new.
 - `follow(position)` generates around a position in Godot's world space, asking again only when it
   enters another chunk.
 - `field_values(stage, chunk)`: a field's values, column by column, x fastest.

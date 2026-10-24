@@ -416,6 +416,9 @@ pub struct WaveForgeStages {
 
     /// What builds the runtime the node generates with, from its settings when it started.
     builder: Option<Builder>,
+    /// The settings the running world was started with and reads while it runs: one changed while
+    /// it runs, in the inspector say, starts it again rather than mixing with what `start` built.
+    started_with: Option<StartedWith>,
     /// The world run under way, if one is.
     world_run: Option<WorldRunning>,
     /// When the editor's configuration warnings were last looked at.
@@ -893,6 +896,7 @@ impl INode for WaveForgeStages {
             bake_button: PhantomVar::default(),
             sun_and_sky_button: PhantomVar::default(),
             unlit_checked: false,
+            started_with: None,
             bake_path: GString::from("res://wave_forge_bake.tscn"),
             rules_files: VarDictionary::new(),
             noises: Dictionary::new(),
@@ -1114,6 +1118,18 @@ impl INode for WaveForgeStages {
             }
         }
         self.update_world_run();
+        if self
+            .started_with
+            .as_ref()
+            .is_some_and(|started| *started != StartedWith::of(self))
+            && self.worker.is_some()
+            && !self.start()
+        {
+            // Started again with settings it refuses: stopped, rather than running on with them.
+            self.worker = None;
+            self.started_with = None;
+            self.clear_ground_and_bodies();
+        }
         if !self.unlit_checked && (!self.grounds.is_empty() || !self.volume_chunks().is_empty()) {
             self.unlit_checked = true;
             crate::first_look::warn_if_unlit(&self.to_gd().upcast());
@@ -1729,6 +1745,7 @@ impl WaveForgeStages {
                 )
             },
         ));
+        self.started_with = Some(StartedWith::of(self));
         true
     }
 
@@ -3062,6 +3079,10 @@ impl WaveForgeStages {
         let cell = self.cell_size;
         let along = along.normalized();
         let step = 0.5 * cell.x.min(cell.z);
+        // `start` refuses such a cell, but the setting can change after it.
+        if step.is_nan() || step <= 0.0 {
+            return VarDictionary::new();
+        }
         let mut travelled = 0.0;
         while travelled < 2000.0 {
             let at = from + along * travelled;
@@ -5515,6 +5536,16 @@ impl WaveForgeStages {
                 ));
             }
         }
+        let cell = self.cell_size;
+        if [cell.x, cell.y, cell.z]
+            .iter()
+            .any(|side| side.is_nan() || *side <= 0.0)
+        {
+            problems.push(format!(
+                "cell_size {} has a side that is not positive",
+                self.cell_size
+            ));
+        }
         if !self.far_ground_stage.is_empty() && self.chunk_cells.x != self.chunk_cells.y {
             problems.push(format!(
                 "far_ground_stage needs chunks of as many cells along x as along y, not {} by {}",
@@ -5951,6 +5982,33 @@ impl WaveForgeStages {
             self.occluders.drop_chunk(chunk);
         }
         self.placements.clear();
+    }
+}
+
+/// The settings a running world was started with that it reads while it runs.
+#[derive(Clone, Debug, PartialEq)]
+struct StartedWith {
+    chunk_cells: Vector3i,
+    cell_size: Vector3,
+    stages: [GString; 8],
+}
+
+impl StartedWith {
+    fn of(node: &WaveForgeStages) -> Self {
+        Self {
+            chunk_cells: node.chunk_cells,
+            cell_size: node.cell_size,
+            stages: [
+                node.ground_stage.clone(),
+                node.ground_material_stage.clone(),
+                node.far_ground_stage.clone(),
+                node.far_ground_material_stage.clone(),
+                node.far_ground_cavity_stage.clone(),
+                node.volume_stage.clone(),
+                node.fluid_stage.clone(),
+                node.grass_stage.clone(),
+            ],
+        }
     }
 }
 
