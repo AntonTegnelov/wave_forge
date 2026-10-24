@@ -72,7 +72,8 @@ impl GenerationFocus {
 /// A chunk's tiles are new or have changed, so anything built from them is stale.
 ///
 /// A repair reports every chunk it rewrote, not only the one it was repairing, so a game that
-/// builds meshes from chunks rebuilds each chunk it sees here.
+/// builds meshes from chunks rebuilds each chunk it sees here. A frame reports a chunk once,
+/// however many times it changed.
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChunkUpdated(pub ChunkCoord);
 
@@ -616,10 +617,15 @@ fn generate<S: Solver + Send + Sync + 'static>(
         return Ok(());
     };
     world.generator.tick()?;
+    // A poll can report a chunk updated more than once, by two repairs that both rewrote some of
+    // its cells, say; a game rebuilds it once.
+    let mut reported = std::collections::BTreeSet::new();
     for event in world.generator.poll()? {
         match event {
             ChunkEvent::Updated(chunk) => {
-                updated.write(ChunkUpdated(chunk));
+                if reported.insert(chunk) {
+                    updated.write(ChunkUpdated(chunk));
+                }
             }
             ChunkEvent::Failed { chunk, status } => {
                 failed.write(ChunkFailed { chunk, status });
