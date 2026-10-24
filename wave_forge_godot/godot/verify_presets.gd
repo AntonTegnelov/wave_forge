@@ -146,7 +146,7 @@ func _settled(path: String, stats: Dictionary) -> String:
 func _drawn() -> Array:
 	return stages.volume_chunks() if stages.ground_stage.is_empty() else stages.ground_chunks()
 
-func _fail(message: String) -> bool:
-	printerr("verify_presets: " + message)
+func _fail(problem) -> bool:
+	printerr("verify_presets: %s" % [problem])
 	quit(1)
 	return true

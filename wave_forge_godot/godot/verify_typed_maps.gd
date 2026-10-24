@@ -42,9 +42,9 @@ proxy_colours = {
 """
 
 func _initialize() -> void:
-	var problem: String = _check()
+	var problem = _check()
 	if problem != "ok":
-		printerr("verify_typed_maps: " + problem)
+		printerr("verify_typed_maps: %s" % [problem])
 		quit(1)
 		return
 	quit(0)

@@ -26,7 +26,7 @@ var first_height := 0.0
 var started_usec := 0
 
 func _initialize() -> void:
-	var problem: String = _make()
+	var problem = _make()
 	if problem != "ok":
 		_fail(problem)
 		return
@@ -187,7 +187,7 @@ func _check_dropped() -> bool:
 	quit(0)
 	return true
 
-func _fail(message: String) -> bool:
-	printerr("verify_stack: " + message)
+func _fail(problem) -> bool:
+	printerr("verify_stack: %s" % [problem])
 	quit(1)
 	return true
