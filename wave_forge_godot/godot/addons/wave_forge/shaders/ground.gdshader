@@ -364,9 +364,12 @@ void fragment() {
 	float grain = detail * near;
 	// What the ground looks like here: one material's look, or where materials meet, theirs blended
 	// by how high each stands.
-	Look here = look_of(ids[0], world, ground, surface, drivers, grain > 0.0);
-	// Most fragments have one material on all four corners and need no border.
-	if (ids[1] != ids[0] || ids[2] != ids[0] || ids[3] != ids[0]) {
+	// Most fragments have one material on all four corners and need no border; a border works out
+	// each material's look once, its first among them too.
+	Look here;
+	if (ids[1] == ids[0] && ids[2] == ids[0] && ids[3] == ids[0]) {
+		here = look_of(ids[0], world, ground, surface, drivers, grain > 0.0);
+	} else {
 		float heights[4];
 		float shares[4];
 		Look looks[4];
@@ -398,6 +401,7 @@ void fragment() {
 		Look blended;
 		blended.albedo = vec3(0.0);
 		blended.micro = vec3(0.0);
+		blended.depth = 0.0;
 		blended.roughness = 0.0;
 		blended.textured = 0.0;
 		float total = 0.0;
@@ -409,6 +413,7 @@ void fragment() {
 			blended.textured += looks[k].textured * weight;
 			total += weight;
 		}
+		here = blended;
 		here.albedo = blended.albedo / total;
 		here.micro = blended.micro / total;
 		here.roughness = blended.roughness / total;
