@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::regions::{Attempt, Curve, CurveId, Edge, RegionInput, RegionJob};
-use wave_forge::stages::{Facts, GivenRow, Pack, Runtime, StageError, Value};
+use wave_forge::stages::{Facts, GivenRow, Pack, RowId, Runtime, StageError, Value};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const SIZE: [u32; 2] = [8, 8];
@@ -239,4 +239,18 @@ fn rivers_carve_their_beds_without_seams_across_region_borders() {
             "the border at x = {border}"
         );
     }
+}
+
+#[test]
+fn focusing_a_road_keeps_the_curves_and_the_ground_drawn_from_its_table() {
+    let mut runtime = runtime(vec![
+        road(1, (4.0, 4.0), (40.0, 4.0), 2.0),
+        road(2, (4.0, 30.0), (40.0, 30.0), 1.0),
+    ])
+    .expect("roads");
+    columns(&mut runtime, "paved", &[area()]);
+
+    let dropped = runtime.focus("roads", RowId(vec![2])).expect("a row");
+
+    assert!(dropped.is_empty(), "{dropped:?}");
 }

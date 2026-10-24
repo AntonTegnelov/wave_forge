@@ -1214,7 +1214,13 @@ impl Runtime {
             .iter()
             .enumerate()
             .filter(|(_, stage)| {
-                stage.tables.contains(&index) && !matches!(stage.kind, StageKind::TableSites { .. })
+                // A TableSites or TableCurves stage lists the table it draws, which a focused row
+                // does not change; only `Row` expressions read the focused row.
+                stage.tables.contains(&index)
+                    && !matches!(
+                        stage.kind,
+                        StageKind::TableSites { .. } | StageKind::TableCurves { .. }
+                    )
             })
             .map(|(reader, _)| (reader, Stale::All))
             .collect();
