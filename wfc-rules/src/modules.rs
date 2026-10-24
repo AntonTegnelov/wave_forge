@@ -596,8 +596,9 @@ impl ModuleSet {
     }
 
     /// All distinct rotations of every prototype. A rotation is dropped when every face of it equals
-    /// the corresponding face of a rotation already kept, so symmetric pieces do not get duplicate
-    /// tiles (duplicates would silently multiply their effective weight and slow propagation).
+    /// the corresponding face of a rotation already kept, and so do its exclusions, which turn with
+    /// it, so symmetric pieces do not get duplicate tiles (duplicates would silently multiply their
+    /// effective weight and slow propagation).
     fn expand_rotations(&self) -> Vec<ModuleVariant> {
         let mut variants = Vec::new();
         for prototype in 0..self.prototypes.len() {
@@ -612,11 +613,21 @@ impl ModuleSet {
                     prototype,
                     rotation,
                 };
+                // A variant's exclusions along the world's axes, in one order whatever its own.
+                let exclusions = |variant: ModuleVariant| {
+                    let mut turned: Vec<(usize, &str)> = self.prototypes[variant.prototype]
+                        .excluded
+                        .iter()
+                        .map(|(axis, name)| (rotate_axis(*axis, variant.rotation), name.as_str()))
+                        .collect();
+                    turned.sort_unstable();
+                    turned
+                };
                 let duplicate = kept.iter().any(|&existing| {
                     (0..NUM_AXES).all(|axis| {
                         variant_face(&self.prototypes, existing, axis)
                             == variant_face(&self.prototypes, candidate, axis)
-                    })
+                    }) && exclusions(existing) == exclusions(candidate)
                 });
                 if !duplicate {
                     kept.push(candidate);
@@ -861,6 +872,28 @@ mod tests {
             compiled.rules.check(a, b, POS_Y),
             "only the excluded face is affected"
         );
+    }
+
+    #[test]
+    fn a_symmetric_module_with_an_exclusion_turns_it_with_each_rotation() {
+        let a = uniform("a", OPEN).exclude(POS_X, "b");
+        let b = uniform("b", OPEN);
+
+        let compiled = ModuleSet::new().with(a).with(b).compile().unwrap();
+
+        let turns = compiled.variants_of("a");
+        assert_eq!(turns.len(), 4, "the exclusion tells the rotations apart");
+        let b = compiled.variants_of("b")[0];
+        for (rotation, &a) in turns.iter().enumerate() {
+            let excluded = rotate_axis(POS_X, rotation as u8);
+            for axis in [POS_X, POS_Y, NEG_X, NEG_Y] {
+                assert_eq!(
+                    compiled.rules.check(a, b, axis),
+                    axis != excluded,
+                    "rotation {rotation}, axis {axis}"
+                );
+            }
+        }
     }
 
     #[test]
