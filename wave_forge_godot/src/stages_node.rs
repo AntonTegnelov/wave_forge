@@ -5450,6 +5450,12 @@ impl WaveForgeStages {
                 ));
             }
         }
+        if !self.far_ground_stage.is_empty() && self.chunk_cells.x != self.chunk_cells.y {
+            problems.push(format!(
+                "far_ground_stage needs chunks of as many cells along x as along y, not {} by {}",
+                self.chunk_cells.x, self.chunk_cells.y
+            ));
+        }
         // A far chunk is drawn only once its colours and its cavity have arrived, so the stages
         // giving them have to reach as far as the far ground.
         let radius = |stage: &GString| self.target_radii.get(&StringName::from(stage));

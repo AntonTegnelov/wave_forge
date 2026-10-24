@@ -752,6 +752,10 @@ impl WaveForgeStagesPlugin {
     /// stage a radius of its own with [`WaveForgeStagesPlugin::with_radius`], as far as the ground
     /// should reach; a coarse chunk's far ground needs the fields around it, so it reaches one
     /// coarse chunk less.
+    ///
+    /// # Panics
+    /// When the plugin is built, if its chunks are not square: the far ground has as many far
+    /// squares along each side of a chunk.
     #[must_use]
     pub fn with_far_ground(mut self, stage: &str, scale: u32) -> Self {
         self.far_ground_stage = Some((stage.to_owned(), scale));
@@ -861,6 +865,11 @@ pub struct WaveForgeStagesSystems;
 
 impl Plugin for WaveForgeStagesPlugin {
     fn build(&self, app: &mut App) {
+        let [x, y] = self.settings.chunk;
+        assert!(
+            self.far_ground_stage.is_none() || x == y,
+            "the far ground needs chunks of as many columns along x as along y, not {x} by {y}"
+        );
         let source = self
             .source
             .lock()
