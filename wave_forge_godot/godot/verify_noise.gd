@@ -3,8 +3,9 @@
 ##
 ## Run by `../verify.sh` after `verify_tables.gd`. The resource is far from Godot's defaults
 ## (cellular, ridged, with a domain warp and an offset), so every part of the conversion and of
-## the library's port is exercised. Each column of the field, and a sample between chunks, must
-## equal `get_noise_2d` at the column's centre in cells.
+## the library's port is exercised. Each column of the field must equal `get_noise_2d` at the
+## column's centre in cells, and a sample, which reads the column a position lies in, the noise at
+## that column's centre: one at a column's centre, and one on the corner where four chunks meet.
 extends SceneTree
 
 const CELLS := 8
@@ -58,17 +59,22 @@ func _process(_delta: float) -> bool:
 		return false
 	var chunk := Vector3i(-1, 2, 0)
 	var values: PackedFloat32Array = world.field_values("height", chunk)
+	if values.size() != CELLS * CELLS:
+		_fail("the height of %s holds %d columns, not %d" % [chunk, values.size(), CELLS * CELLS])
+		return true
 	for i in values.size():
 		var x := chunk.x * CELLS + i % CELLS + 0.5
 		var y := chunk.y * CELLS + i / CELLS + 0.5
 		if values[i] != noise.get_noise_2d(x, y):
 			_fail("column (%s, %s) holds %s; the resource gives %s" % [x, y, values[i], noise.get_noise_2d(x, y)])
 			return true
-	var sampled: float = world.sample("height", Vector3(-3.5, 0, 17.5))
-	if sampled != noise.get_noise_2d(-3.5, 17.5):
-		_fail("a sample gives %s; the resource gives %s" % [sampled, noise.get_noise_2d(-3.5, 17.5)])
-		return true
-	print("verify_noise: a FastNoiseLite resource's noise is what the field holds, column for column, and what a sample gives")
+	for at: Vector2 in [Vector2(-3.5, 17.5), Vector2(0.0, 16.0)]:
+		var sampled: float = world.sample("height", Vector3(at.x, 0, at.y))
+		var centre := at.floor() + Vector2(0.5, 0.5)
+		if sampled != noise.get_noise_2d(centre.x, centre.y):
+			_fail("a sample at %s gives %s; the resource gives %s at its column's centre" % [at, sampled, noise.get_noise_2d(centre.x, centre.y)])
+			return true
+	print("verify_noise: a FastNoiseLite resource's noise is what the field holds, column for column, and what a sample gives on a column and between chunks")
 	quit(0)
 	return true
 

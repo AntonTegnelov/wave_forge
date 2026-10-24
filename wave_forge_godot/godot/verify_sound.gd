@@ -179,8 +179,7 @@ func _check_nodes() -> bool:
 	print("verify_sound: %d interiors reverb on %s and play on %s, %d players play the fountains" % [areas.size(), BUS, INDOORS, playing.size()])
 	return true
 
-## Once the player has left, no area is left and no player plays where it was; the chunks it went to
-## have sound of their own.
+## Once the player has left, no area is left and no player plays where it was.
 func _check_left() -> bool:
 	var reach := (RADIUS + 1) * CELLS * CELL_SIZE
 	var behind := func(node: Node) -> bool:
