@@ -13,24 +13,23 @@ const SIDES := 8
 
 func _initialize() -> void:
 	# Each part: from, to, the radius at each end, and its colour.
-	_write("Cactus", "cactus", [
+	var written := _write("Cactus", "cactus", [
 		[Vector3(0, 0, 0), Vector3(0, 2.4, 0), 0.28, 0.24, CACTUS],
 		[Vector3(0, 1.0, 0), Vector3(0.6, 1.0, 0), 0.15, 0.15, CACTUS],
 		[Vector3(0.6, 0.9, 0), Vector3(0.6, 1.8, 0), 0.15, 0.12, CACTUS],
 		[Vector3(0, 1.4, 0), Vector3(0, 1.4, -0.5), 0.14, 0.14, CACTUS],
 		[Vector3(0, 1.3, -0.5), Vector3(0, 2.0, -0.5), 0.14, 0.11, CACTUS],
-	])
-	_write("Palm", "palm", [
+	]) and _write("Palm", "palm", [
 		[Vector3(0, 0, 0), Vector3(0.1, 1.5, 0), 0.15, 0.13, PALM_TRUNK],
 		[Vector3(0.1, 1.5, 0), Vector3(0.35, 3.0, 0), 0.13, 0.11, PALM_TRUNK],
 		[Vector3(0.35, 3.0, 0), Vector3(0.7, 4.2, 0), 0.11, 0.09, PALM_TRUNK],
 		[Vector3(0.7, 3.9, 0), Vector3(0.7, 4.5, 0), 1.7, 0.0, FRONDS],
 	])
-	quit()
+	quit(0 if written else 1)
 
 ## Saves the mesh of `parts` as `addons/wave_forge/<file>.tres` and a scene of it, its root named
-## `node`, as `<file>.tscn`.
-func _write(node: String, file: String, parts: Array) -> void:
+## `node`, as `<file>.tscn`; returns whether both were written, saying which was not.
+func _write(node: String, file: String, parts: Array) -> bool:
 	var tool := SurfaceTool.new()
 	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for part: Array in parts:
@@ -42,15 +41,22 @@ func _write(node: String, file: String, parts: Array) -> void:
 	material.roughness = 0.9
 	tool.set_material(material)
 	var path := "res://addons/wave_forge/%s" % file
-	ResourceSaver.save(tool.commit(), path + ".tres")
+	var saved := ResourceSaver.save(tool.commit(), path + ".tres")
+	if saved != OK:
+		printerr("make_props: %s.tres could not be written: %s" % [path, error_string(saved)])
+		return false
 	var instance := MeshInstance3D.new()
 	instance.name = node
 	instance.mesh = load(path + ".tres")
 	var scene := PackedScene.new()
 	scene.pack(instance)
-	ResourceSaver.save(scene, path + ".tscn")
 	instance.free()
+	saved = ResourceSaver.save(scene, path + ".tscn")
+	if saved != OK:
+		printerr("make_props: %s.tscn could not be written: %s" % [path, error_string(saved)])
+		return false
 	print("make_props: wrote addons/wave_forge/%s.tres and %s.tscn" % [file, file])
+	return true
 
 ## A cone or frustum from `from` to `to`, of radius `bottom` at `from` and `top` at `to`, with a cap
 ## on each end that has a radius, in `colour`.

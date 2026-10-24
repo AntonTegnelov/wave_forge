@@ -48,14 +48,20 @@ static func build(kits: String, sets: Dictionary[String, String], out: String) -
 					outcome.refused.append("%s/%s: %s" % [batch, module, problem])
 				continue
 			var path := out.path_join(batch).path_join(module)
-			ResourceSaver.save(mesh, path + ".res")
+			var saved := ResourceSaver.save(mesh, path + ".res")
+			if saved != OK:
+				outcome.refused.append("%s/%s: %s.res could not be written: %s" % [batch, module, path, error_string(saved)])
+				continue
 			var instance := MeshInstance3D.new()
 			instance.name = module
 			instance.mesh = load(path + ".res")
 			var scene := PackedScene.new()
 			scene.pack(instance)
-			ResourceSaver.save(scene, path + ".tscn")
 			instance.free()
+			saved = ResourceSaver.save(scene, path + ".tscn")
+			if saved != OK:
+				outcome.refused.append("%s/%s: %s.tscn could not be written: %s" % [batch, module, path, error_string(saved)])
+				continue
 			outcome.bound[module] = path + ".tscn"
 	return outcome
 
