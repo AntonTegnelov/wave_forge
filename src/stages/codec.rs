@@ -2,7 +2,7 @@
 //! with a volume's values laid out byte by byte, and compressed, so it comes back exactly as it was
 //! generated. What that saves is measured in docs/research/measurements.md (L47).
 
-use super::runtime::{Product, Volume};
+use super::runtime::{Categories, Field, Product, Volume};
 use flate2::Compression;
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
@@ -115,8 +115,28 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Product, String> {
                     ])
                 })
                 .collect();
+            if !volume.materials.is_empty() && volume.materials.len() != count {
+                return Err(format!(
+                    "{} materials for a volume of {:?}",
+                    volume.materials.len(),
+                    volume.size
+                ));
+            }
         }
         _ if !rest.is_empty() => return Err(format!("{} bytes after the product", rest.len())),
+        Product::Field(Field { size, values, .. })
+            if values.len() as u64 != u64::from(size[0]) * u64::from(size[1]) =>
+        {
+            return Err(format!("{} values for a field of {size:?}", values.len()));
+        }
+        Product::Categories(Categories { size, values, .. })
+            if values.len() as u64 != u64::from(size[0]) * u64::from(size[1]) =>
+        {
+            return Err(format!(
+                "{} values for categories of {size:?}",
+                values.len()
+            ));
+        }
         _ => {}
     }
     Ok(product)
@@ -160,7 +180,6 @@ pub(crate) fn decode_chunk(bytes: &[u8]) -> Result<Entry, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::runtime::Field;
     use super::*;
     use wfc_core::ChunkCoord;
 
@@ -249,5 +268,33 @@ mod tests {
         let refused = decode(&bytes);
 
         assert!(refused.is_err_and(|reason| reason.contains("format")));
+    }
+
+    #[test]
+    fn a_field_of_fewer_values_than_its_size_is_refused() {
+        let short = Product::Field(Field {
+            chunk: ChunkCoord::new(0, 0, 0),
+            size: [2, 2],
+            values: vec![1.0; 3],
+        });
+
+        let refused = decode(&encode(&short));
+
+        assert!(refused.is_err());
+    }
+
+    #[test]
+    fn a_volume_of_fewer_materials_than_voxels_is_refused() {
+        let short = Product::Volume(Volume {
+            chunk: ChunkCoord::new(0, 0, 0),
+            size: [2, 2, 2],
+            bottom: 0,
+            values: vec![1.0; 8],
+            materials: vec![0; 7],
+        });
+
+        let refused = decode(&encode(&short));
+
+        assert!(refused.is_err());
     }
 }
