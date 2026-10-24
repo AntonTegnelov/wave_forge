@@ -28,6 +28,10 @@ Each era starts with its standing protocol, and a row names only what differs fr
   cell: code in `wfc_devtools::city` until [#52], `examples/city.ron` since. Other rule sets are
   named where they are used.
 - **Chunk and halo.** A chunk is 8×8×8 cells of 2 m unless stated. The halo is in cells.
+- **Memory.** A MB is 10^6 bytes. The peak resident memory the Godot measuring scripts print
+  (`peak_mb`, from `peak_memory.gd`) was in mebibytes of 2^20 bytes until [#473], so every peak a
+  Godot row recorded before it is 4.9 % below the same peak in MB; the resident memory of
+  `measure_memory.gd` (L58) was always in MB.
 - **Seeds.** The world seed, or the seeds of the solves compared.
 - **Source.** The test or bench and its command. Where the code no longer exists, the commit or
   pull request where it can be read.
