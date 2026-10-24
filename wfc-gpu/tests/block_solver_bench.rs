@@ -18,6 +18,7 @@ use wfc_core::{
     WorldExtent, region_init,
 };
 use wfc_devtools::city::{self, city_prior};
+use wfc_devtools::{BoundaryCondition, TileGrid, adjacency_violations};
 use wfc_gpu::Params;
 use wfc_gpu::block_solver::BlockSolver;
 use wfc_gpu::kernel::SolverConfig;
@@ -244,6 +245,7 @@ fn every_reported_success_is_a_valid_chunk() {
     let (ruleset, region, init) = lone_chunk();
     let shape = region.shape();
     let chunks = 64u32;
+    let rules = city::city().modules.rules;
 
     for (radius, undo) in [(0u32, 0u32), (2, 0), (0, 1), (2, 1)] {
         let config = SolverConfig {
@@ -262,7 +264,9 @@ fn every_reported_success_is_a_valid_chunk() {
             .expect("a well-formed batch");
         let result = solver.wait(job).expect("the dispatch finishes");
 
-        let invalid: Vec<(usize, u32, u32)> = result
+        // Each invalid region: its index, empty and undecided cells, cells holding a tile their
+        // starting domain forbade, and adjacency violations.
+        let invalid: Vec<(usize, u32, u32, u32, u32)> = result
             .statuses
             .iter()
             .enumerate()
@@ -273,7 +277,27 @@ fn every_reported_success_is_a_valid_chunk() {
                     .filter(|c| region.count(*c) == 0)
                     .count() as u32;
                 let open = (0..region.cells()).filter(|c| region.count(*c) > 1).count() as u32;
-                (empty + open > 0).then_some((index, empty, open))
+                if empty + open > 0 {
+                    return Some((index, empty, open, 0, 0));
+                }
+                // Decided, so its tiles have to be ones its starting domains allowed, beside
+                // neighbours the rules allow.
+                let forbidden = (0..region.cells())
+                    .filter(|&c| {
+                        let tile = region.decided(c).expect("every cell is decided");
+                        !init.mask(c).contains(tile)
+                    })
+                    .count() as u32;
+                let grid = TileGrid::from_domains(
+                    &region,
+                    CHUNK.x as usize,
+                    CHUNK.y as usize,
+                    CHUNK.z as usize,
+                )
+                .expect("every cell is decided");
+                let broken =
+                    adjacency_violations(&grid, &rules, BoundaryCondition::Finite).len() as u32;
+                (forbidden + broken > 0).then_some((index, 0, 0, forbidden, broken))
             })
             .collect();
         let solved = result.statuses.iter().filter(|s| s.is_solved()).count();
