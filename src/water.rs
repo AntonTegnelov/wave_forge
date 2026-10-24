@@ -2,7 +2,9 @@
 //! ground the engine draws (docs/reference/packs.md, "Water surfaces").
 //!
 //! The mesh stands on the ground's grid ([`fn@crate::ground`]): a vertex above the centre of every
-//! column, the +x and +y edges from the chunks beyond, so neighbouring chunks' water meets exactly.
+//! column, the +x and +y edges from the chunks beyond, and each normal from the heights on either
+//! side of its vertex, those beyond the chunk's edges included, so neighbouring chunks' water meets
+//! exactly and is lit alike along their border.
 //! A vertex is wet where the water's level stands above the ground there, and takes that level; a
 //! dry one sits just under the ground. Every square with a wet corner is drawn, so the surface runs
 //! from the water out to where it dips under the shore: the ground hides its edge, and no gap opens
@@ -48,8 +50,7 @@ pub struct WaterMesh {
 /// and the sea's, so the sea is drawn as water too. A pack makes the water's field from its Lakes
 /// stage and its rivers ([`WET`] says how far above the ground counts as water).
 ///
-/// Returns `None` until both fields of `chunk` and of the chunks beyond its +x edge, its +y edge and
-/// its +x+y corner have arrived.
+/// Returns `None` until both fields of `chunk` and of all eight chunks around it have arrived.
 ///
 /// # Panics
 /// If the fields' chunks differ in size.
@@ -80,15 +81,6 @@ pub fn water_surface<'a>(
         .map(|(level, ground)| level - ground > WET)
         .collect();
     let [cell_x, cell_up, cell_z] = cell_size;
-    let heights: Vec<f32> = (0..levels.len())
-        .map(|v| {
-            if wet[v] {
-                levels[v] * cell_up
-            } else {
-                (floor[v] - UNDER) * cell_up
-            }
-        })
-        .collect();
     let depths: Vec<f32> = (0..levels.len())
         .map(|v| {
             if wet[v] {
@@ -98,9 +90,20 @@ pub fn water_surface<'a>(
             }
         })
         .collect();
+    // The surface's height at a column from -1 to one past the far edge: the water's level where it
+    // is wet, just under the ground where it is dry. The chunks on either side of an edge compute
+    // the same heights there, so the same normals.
+    let water_around = around(chunk, &water)?;
+    let ground_around = around(chunk, &ground)?;
     let at = |i: i64, j: i64| {
-        let (i, j) = (i.clamp(0, i64::from(w) - 1), j.clamp(0, i64::from(h) - 1));
-        heights[(j * i64::from(w) + i) as usize]
+        let level = column(&water_around, i, j);
+        let level = sea.map_or(level, |sea| level.max(sea));
+        let floor = column(&ground_around, i, j);
+        if level - floor > WET {
+            level * cell_up
+        } else {
+            (floor - UNDER) * cell_up
+        }
     };
     let mut positions = Vec::with_capacity(levels.len());
     let mut normals = Vec::with_capacity(levels.len());
@@ -206,6 +209,40 @@ pub fn water_banks<'a>(
         }
     }
     Some(banks)
+}
+
+/// The fields of `chunk` and the eight chunks around it, by row from -y and column from -x, or
+/// `None` until all have arrived.
+fn around<'a>(
+    chunk: ChunkCoord,
+    field: impl Fn(ChunkCoord) -> Option<&'a Field>,
+) -> Option<[[&'a Field; 3]; 3]> {
+    let mut fields = [[None; 3]; 3];
+    for (dy, row) in fields.iter_mut().enumerate() {
+        for (dx, slot) in row.iter_mut().enumerate() {
+            let neighbour = field(ChunkCoord::new(
+                chunk.x + dx as i32 - 1,
+                chunk.y + dy as i32 - 1,
+                chunk.z,
+            ))?;
+            *slot = Some(neighbour);
+        }
+    }
+    Some(fields.map(|row| row.map(|field| field.expect("every neighbour was looked up above"))))
+}
+
+/// The value of the column `x`, `y` relative to the first of the middle chunk of `fields`.
+///
+/// # Panics
+/// If the fields differ in size, or the column lies beyond the chunks around.
+fn column(fields: &[[&Field; 3]; 3], x: i64, y: i64) -> f32 {
+    let [sx, sy] = fields[1][1].size.map(i64::from);
+    let field = fields[(y.div_euclid(sy) + 1) as usize][(x.div_euclid(sx) + 1) as usize];
+    assert_eq!(
+        field.size, fields[1][1].size,
+        "the fields of one stage share a size"
+    );
+    field.get(x.rem_euclid(sx) as u32, y.rem_euclid(sy) as u32)
 }
 
 #[cfg(test)]
