@@ -2945,7 +2945,7 @@ impl Runtime {
             }
         }
         let inside = |site: &Site| {
-            let centre = |low: i32, high: i32| (i64::from(low) + i64::from(high)) / 2;
+            let centre = |low: i32, high: i32| (i64::from(low) + i64::from(high)).div_euclid(2);
             region_of(
                 ChunkCoord::new(
                     centre(site.min.0, site.max.0) as i32,

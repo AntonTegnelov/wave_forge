@@ -127,6 +127,30 @@ fn a_road_over_flat_ground_runs_straight_and_stops_at_the_villages() {
 }
 
 #[test]
+fn villages_west_of_the_origin_are_joined_as_those_east_of_it() {
+    let pack = Arc::new(Pack::parse(&ridge_pack("Constant(0.0)", "")).expect("a valid pack"));
+    let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+    let mut facts = Facts::new(pack, 3).expect("facts");
+    // The flat-ground road's villages mirrored across x = 0: the nearer stands in chunk -1, the
+    // last of its region.
+    facts
+        .give(
+            "villages",
+            vec![village(1, -4.0, 48.0), village(2, -76.0, 48.0)],
+        )
+        .expect("villages");
+    runtime.set_facts(facts).expect("facts");
+    let west: Vec<ChunkCoord> = region_chunks()
+        .into_iter()
+        .map(|chunk| ChunkCoord::new(-1 - chunk.x, chunk.y, 0))
+        .collect();
+
+    let roads = curves(&mut runtime, "roads", &[west]);
+
+    assert_eq!(roads.len(), 1, "{roads:?}");
+}
+
+#[test]
 fn no_road_crosses_ground_below_dry() {
     let (_, roads) = ridge_roads("Constant(0.0)", ", dry: Some(1.0)");
 
