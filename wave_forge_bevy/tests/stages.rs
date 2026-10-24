@@ -247,6 +247,52 @@ fn a_point_stands_where_the_lattice_puts_it_in_bevys_world() {
 }
 
 #[test]
+fn a_stretched_turned_point_stands_as_its_basis_says() {
+    let pack = PACK.replace(
+        "spacing: 3, apart: 3)",
+        "spacing: 3, apart: 3, scale: (0.8, 1.3), stretch: (1.15, 1.15))",
+    );
+    let make = move || {
+        Ok(Runtime::new(
+            Arc::new(Pack::parse(&pack).expect("a valid pack")),
+            4,
+            SETTINGS.chunk,
+        ))
+    };
+    let mut app = app_with(WaveForgeStagesPlugin::new(
+        &["height", "trees", "cover"],
+        SETTINGS,
+        make,
+    ));
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .points("trees", ChunkCoord::new(0, 0, 0))
+            .is_some_and(|points| !points.is_empty())
+    });
+    let stages = app.world().resource::<WaveForgeStages>();
+    let points = stages
+        .points("trees", ChunkCoord::new(0, 0, 0))
+        .expect("arrived");
+
+    for point in points {
+        let matrix = stages.transform_of(point).compute_affine().matrix3;
+        let rows = point.y_up_basis();
+
+        assert!((point.stretch - 1.15).abs() < 1e-6, "{point:?}");
+        for (row, wanted) in rows.iter().enumerate() {
+            for (column, wanted) in wanted.iter().enumerate() {
+                let got = matrix.col(column)[row];
+                assert!(
+                    (got - wanted).abs() < 1e-5,
+                    "{point:?}: row {row}, column {column}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn moving_away_drops_what_was_left_behind() {
     let mut app = app();
     run_until(&mut app, |app| {

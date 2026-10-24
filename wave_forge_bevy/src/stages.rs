@@ -299,12 +299,20 @@ impl WaveForgeStages {
     /// turned, leant and scaled as its stage made it.
     #[must_use]
     pub fn transform_of(&self, point: &Point) -> Transform {
+        // The basis is a rotation times its scale along each of its own axes, `scale` across and
+        // `scale` times `stretch` up: each column's length is its scale, and the columns divided by
+        // their lengths are the rotation. Bevy scales before it rotates, so this is the basis.
         let rows = point.y_up_basis();
-        let column = |c: usize| Vec3::new(rows[0][c], rows[1][c], rows[2][c]) / point.scale;
+        let column = |c: usize| Vec3::new(rows[0][c], rows[1][c], rows[2][c]);
+        let (x, y, z) = (column(0), column(1), column(2));
         Transform {
             translation: self.translation_of(point),
-            rotation: Quat::from_mat3(&Mat3::from_cols(column(0), column(1), column(2))),
-            scale: Vec3::splat(point.scale),
+            rotation: Quat::from_mat3(&Mat3::from_cols(
+                x.normalize(),
+                y.normalize(),
+                z.normalize(),
+            )),
+            scale: Vec3::new(x.length(), y.length(), z.length()),
         }
     }
 
