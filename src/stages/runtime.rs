@@ -368,6 +368,68 @@ pub enum Product {
 }
 
 impl Product {
+    /// The kind of output a stage of this product makes.
+    const fn output(&self) -> Output {
+        match self {
+            Self::Field(_) => Output::Field,
+            Self::Volume(_) => Output::Volume,
+            Self::Categories(_) => Output::Categories,
+            Self::Sites(_) => Output::Sites,
+            Self::Tiles(_) => Output::Tiles,
+            Self::Points(_) => Output::Points,
+            Self::Curves(_) => Output::Curves,
+            Self::Stamps(_) => Output::Pieces,
+        }
+    }
+
+    /// Why this product cannot be chunk `chunk` of a runtime of chunks `size` columns a side, if
+    /// it cannot: it holds another chunk, has another size, or has too few or too many values.
+    fn misfit(&self, chunk: ChunkCoord, size: [u32; 2]) -> Option<String> {
+        let (own, columns, values, levels) = match self {
+            Self::Field(field) => (field.chunk, field.size, field.values.len(), 1),
+            Self::Categories(categories) => (
+                categories.chunk,
+                categories.size,
+                categories.values.len(),
+                1,
+            ),
+            Self::Volume(volume) => {
+                if !volume.materials.is_empty() && volume.materials.len() != volume.values.len() {
+                    return Some(format!(
+                        "it has {} materials for {} values",
+                        volume.materials.len(),
+                        volume.values.len()
+                    ));
+                }
+                (
+                    volume.chunk,
+                    [volume.size[0], volume.size[1]],
+                    volume.values.len(),
+                    volume.size[2],
+                )
+            }
+            Self::Sites(_)
+            | Self::Tiles(_)
+            | Self::Points(_)
+            | Self::Curves(_)
+            | Self::Stamps(_) => {
+                return None;
+            }
+        };
+        let expected = u64::from(columns[0]) * u64::from(columns[1]) * u64::from(levels);
+        if own != chunk {
+            Some(format!("it holds chunk {own:?}"))
+        } else if columns != size {
+            Some(format!(
+                "it is {columns:?} columns, the runtime's chunks {size:?}"
+            ))
+        } else if values as u64 != expected {
+            Some(format!("it has {values} values for {expected} places"))
+        } else {
+            None
+        }
+    }
+
     /// The footprints of a sites stage's sites or an Assemble stage's pieces, each with what names
     /// it.
     fn levelled(&self, size: [u32; 2]) -> Vec<(LevelledId, Levelled)> {
@@ -538,6 +600,14 @@ pub enum StageError {
     TownsStopped,
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A frozen chunk from a save or a store was generated for chunks of another size than the
+    /// runtime's, or does not hold the chunk it is kept as.
+    #[error("the frozen chunk {chunk:?} of stage {stage:?} does not fit the runtime: {message}")]
+    Frozen {
+        stage: String,
+        chunk: ChunkCoord,
+        message: String,
+    },
     #[error("stage {stage:?} could not solve the town of {site:?}: {message}")]
     Town {
         stage: String,
@@ -1686,22 +1756,37 @@ impl Runtime {
 
     /// Brings a world back from `save`: its edits, and the chunks of the stages this pack
     /// freezes as they were first generated, even if the pack has changed since. A frozen chunk
-    /// of a stage this pack does not freeze, or does not have, is left out. Drops what the save
-    /// changes and returns it as [`Runtime::request`] does. On an error nothing changes.
+    /// of a stage this pack does not freeze, or does not have, or that now makes another kind of
+    /// product, is left out. Drops what the save changes and returns it as [`Runtime::request`]
+    /// does. On an error nothing changes.
     ///
     /// # Errors
-    /// [`StageError::Edit`] as [`Runtime::set_edits`].
+    /// [`StageError::Edit`] as [`Runtime::set_edits`], and [`StageError::Frozen`] for a frozen
+    /// chunk of another chunk size than the runtime's.
     pub fn load(&mut self, save: &Save) -> Result<Vec<(String, ChunkCoord)>, StageError> {
-        let mut dropped = self.set_edits(&save.edits)?;
-        let mut stale: BTreeMap<usize, Stale> = BTreeMap::new();
+        // A chunk of a stage that now makes another kind of product is left out, as one of a
+        // stage the pack no longer freezes is; one that does not fit the runtime's chunks is the
+        // game's mistake and refused before anything changes.
+        let mut kept: Vec<(usize, &FrozenChunk)> = Vec::new();
         for frozen in &save.frozen {
-            let Some(index) = self
-                .pack
-                .index(&frozen.stage)
-                .filter(|&index| self.pack.stages[index].persist == Persist::Frozen)
-            else {
+            let Some(index) = self.pack.index(&frozen.stage).filter(|&index| {
+                let stage = &self.pack.stages[index];
+                stage.persist == Persist::Frozen && stage.kind.output() == frozen.product.output()
+            }) else {
                 continue;
             };
+            if let Some(message) = frozen.product.misfit(frozen.chunk, self.size) {
+                return Err(StageError::Frozen {
+                    stage: frozen.stage.clone(),
+                    chunk: frozen.chunk,
+                    message,
+                });
+            }
+            kept.push((index, frozen));
+        }
+        let mut dropped = self.set_edits(&save.edits)?;
+        let mut stale: BTreeMap<usize, Stale> = BTreeMap::new();
+        for (index, frozen) in kept {
             self.frozen
                 .insert((index, frozen.chunk), Arc::new(frozen.product.clone()));
             match stale
@@ -1906,6 +1991,17 @@ impl Runtime {
                      {error}"
             ))
         })?;
+        // A stored chunk of a stage that now makes another kind of product is generated anew.
+        if product.output() != self.pack.stages[index].kind.output() {
+            return Ok(None);
+        }
+        if let Some(message) = product.misfit(chunk, self.size) {
+            return Err(StageError::Frozen {
+                stage: stage.clone(),
+                chunk,
+                message,
+            });
+        }
         let product = Arc::new(product);
         self.frozen.insert((index, chunk), Arc::clone(&product));
         Ok(Some(product))

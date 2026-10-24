@@ -251,8 +251,10 @@ ephemeral stages, and every frozen chunk the runtime has generated. `Save::to_ro
 write and read it. `Runtime::load(&save)` brings a world back: it sets the save's edits and puts
 the frozen chunks of every stage this pack freezes in place, even if the pack has changed since, so
 a frozen chunk never generated before follows the new pack and one generated before stays as it
-was. A frozen chunk of a stage the pack no longer has, or no longer freezes, is left out. It
-returns the drops as `request` does, and fails as `set_edits` does, changing nothing. A game
+was. A frozen chunk of a stage the pack no longer has, no longer freezes, or that now makes
+another kind of product, is left out. It returns the drops as `request` does, and fails as
+`set_edits` does, or when a frozen chunk has another size than the runtime's chunks, changing
+nothing. A game
 compares `generator` and `pack` with its own to decide what to tell a player; the runtime never
 refuses a save for them. The facts are the game's to save beside it.
 
@@ -266,7 +268,8 @@ per chunk under a directory. A product goes into a store exactly as it was gener
 form compressed with deflate, a volume's values laid out byte by byte so they compress well; the
 first byte names the form, and a store written in another is refused rather than misread. A save then holds only the frozen chunks in memory, and the game keeps
 the store with its saves; a runtime of a changed pack given the same store reads a stored chunk as
-it was first generated.
+it was first generated, unless its stage now makes another kind of product, when it is generated
+anew. A stored chunk of another size than the runtime's chunks is refused.
 
 ## Hashes
 
