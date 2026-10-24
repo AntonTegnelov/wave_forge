@@ -1460,7 +1460,8 @@ impl Runtime {
             }
             let stage = &self.pack.stages[index];
             // A chunk asked for may already have a town or a region behind it, so those count
-            // with the chunks held.
+            // with the chunks held, and so does a region computed for chunks no longer asked for,
+            // which a bounded world keeps.
             let candidates: BTreeSet<ChunkCoord> = self
                 .needed
                 .get(&index)
@@ -1473,6 +1474,7 @@ impl Runtime {
                         .filter(|(held, _)| *held == index)
                         .map(|&(_, chunk)| chunk),
                 )
+                .chain(self.computed_region_chunks(index))
                 .collect();
             let mut chunks = match stale.remove(&index) {
                 Some(Stale::Chunks(chunks)) => chunks,
@@ -1596,6 +1598,58 @@ impl Runtime {
             }
         }
         Ok(dropped)
+    }
+
+    /// The first chunk of each region stage `index` has computed: a region job's curves, a
+    /// Locations stage's places, a region field, or a cave's plan, tunnels or budgeted points.
+    fn computed_region_chunks(&self, index: usize) -> Vec<ChunkCoord> {
+        let first = |size: u32, region: (i32, i32)| {
+            ChunkCoord::new(region.0 * size as i32, region.1 * size as i32, 0)
+        };
+        let of_stage = (index, (i32::MIN, i32::MIN))..=(index, (i32::MAX, i32::MAX));
+        let kind = &self.pack.stages[index].kind;
+        let mut chunks: Vec<ChunkCoord> = Vec::new();
+        if let Some(size) = kind.job_region() {
+            chunks.extend(
+                self.regions
+                    .range(of_stage.clone())
+                    .map(|(&(_, region), _)| first(size, region)),
+            );
+        }
+        if let StageKind::Locations { region: size, .. } = *kind {
+            chunks.extend(
+                self.placed
+                    .range(of_stage.clone())
+                    .map(|(&(_, region), _)| first(size, region)),
+            );
+        }
+        if let Some(size) = kind.field_region() {
+            chunks.extend(
+                self.region_fields
+                    .range(of_stage.clone())
+                    .map(|(&(_, region), _)| first(size, region)),
+            );
+        }
+        let caves: Vec<(i32, i32)> = self
+            .caves
+            .range(of_stage.clone())
+            .map(|(&(_, region), _)| region)
+            .chain(
+                self.tunnels
+                    .range(of_stage.clone())
+                    .map(|(&(_, region), _)| region),
+            )
+            .chain(
+                self.budgeted
+                    .range(of_stage)
+                    .map(|(&(_, region), _)| region),
+            )
+            .collect();
+        if !caves.is_empty() {
+            let size = self.pack.cave_region(index);
+            chunks.extend(caves.into_iter().map(|region| first(size, region)));
+        }
+        chunks
     }
 
     /// How many regions the runtime holds computed, of every kind of region stage.
