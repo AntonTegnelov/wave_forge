@@ -12,7 +12,7 @@ use wfc_devtools::city::{self, city_prior};
 const CHUNK: ChunkShape = ChunkShape::cube(8);
 
 #[test]
-fn a_second_world_start_compiles_from_the_pipelines_the_first_cached() {
+fn a_world_start_writes_a_pipeline_cache_file_for_each_kernel() {
     let dir = std::env::temp_dir().join(format!("wave_forge_world_kernels_{}", std::process::id()));
     let start = |label: &str| {
         let city = city::city();

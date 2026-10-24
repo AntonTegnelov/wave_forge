@@ -59,7 +59,7 @@ fn only_the_first_town_compiles_kernels() {
 }
 
 #[test]
-fn a_second_start_compiles_from_the_pipelines_the_first_cached() {
+fn a_start_writes_a_pipeline_cache_file_for_each_kernel() {
     let dir = std::env::temp_dir().join(format!("wave_forge_kernels_{}", std::process::id()));
     let bottom = Selector::Tagged("street_level".to_owned());
     let top = Selector::Named("air".to_owned());
