@@ -136,6 +136,7 @@ fn rows_whose_sites_would_crowd_or_break_the_size_are_refused_by_row() {
         vec![village(1, (10.0, 10.0), 4.0, "standing")],
         vec![village(1, (10.0, 10.0), 1.5, "standing")],
         vec![village(1, (f32::INFINITY, 10.0), 1.0, "standing")],
+        vec![village(1, (1e12, 10.0), 1.0, "standing")],
     ];
 
     for villages in refusals {

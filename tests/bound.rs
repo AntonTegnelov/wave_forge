@@ -1,10 +1,11 @@
 //! A world bound: a finite world generates no target chunk wholly outside it, computes its region
-//! jobs before play when asked for its whole bound, and keeps them.
+//! jobs before play when asked for its whole bound, and keeps them, computing a kept region again
+//! when an edit changes what it read.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use wave_forge::stages::regions::{Attempt, RegionInput, RegionJob};
-use wave_forge::stages::{Pack, PackError, Runtime, StageError};
+use wave_forge::stages::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob};
+use wave_forge::stages::{Edit, Edits, Pack, PackError, Runtime, StageError};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const SIZE: [u32; 2] = [8, 8];
@@ -163,4 +164,56 @@ fn a_bound_that_holds_nothing_is_refused() {
             "{bound}: {result:?}"
         );
     }
+}
+
+/// A curve across its region whose value is the height at the region's lowest corner.
+struct Corner;
+
+impl RegionJob for Corner {
+    fn run(&self, input: &RegionInput<'_>) -> Result<Attempt, StageError> {
+        let ([x0, y0], [x1, y1]) = input.columns();
+        let height = input.field("height", x0, y0)?;
+        Ok(Attempt::Accepted(vec![Curve {
+            id: CurveId::Region {
+                region: input.region(),
+                index: 0,
+            },
+            points: vec![[x0 as f32, y0 as f32], [x1 as f32 + 1.0, y1 as f32 + 1.0]],
+            values: vec![height, height],
+            heights: Vec::new(),
+        }]))
+    }
+}
+
+#[test]
+fn a_kept_region_is_computed_again_when_an_edit_changes_what_it_read() {
+    let pack = Pack::parse(
+        r#"(version: 1, bound: Some(Rect(min: (-40.0, -40.0), max: (39.0, 39.0))), stages: [
+            (name: "height", kind: Field(Constant(1.0))),
+            (name: "corners", kind: Region(job: "corner", region: 4, inputs: ["height"])),
+        ])"#,
+    )
+    .expect("a valid pack");
+    let mut runtime = Runtime::new(Arc::new(pack), 3, SIZE).with_region_job("corner", Corner);
+    let ask = |runtime: &mut Runtime, at: ChunkCoord| {
+        runtime
+            .request(&[FocusPoint::new(at, 0)], &["corners"])
+            .expect("a stage");
+        runtime.run_until_idle().expect("the stages run");
+    };
+    let near = ChunkCoord::new(1, 1, 0);
+    ask(&mut runtime, near);
+    ask(&mut runtime, ChunkCoord::new(-4, -4, 0));
+    let mut edits = Edits::default();
+    edits.push(Edit::Raise {
+        stage: "height".to_owned(),
+        column: (0, 0),
+        by: 5.0,
+    });
+
+    runtime.set_edits(&edits).expect("edits");
+    ask(&mut runtime, near);
+
+    let curves = runtime.curves("corners", near).expect("generated");
+    assert_eq!(curves[0].values, vec![6.0, 6.0]);
 }

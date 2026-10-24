@@ -1,9 +1,10 @@
 //! Saves: a frozen stage keeps the chunks it first generated after the pack changes, an
 //! ephemeral stage's edits are never saved, and a save records the generator and the pack. The
-//! ring world freezes its locations and never saves its grass.
+//! ring world freezes its locations and never saves its grass. A frozen chunk whose stage now makes
+//! another kind of product is left out, and one of another chunk size is refused.
 
 use std::sync::Arc;
-use wave_forge::stages::{Edit, Edits, Pack, Point, PointId, Runtime, Save};
+use wave_forge::stages::{Edit, Edits, Pack, Point, PointId, Runtime, Save, StageError};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 fn pack(tree_spacing: u32) -> Arc<Pack> {
@@ -148,4 +149,55 @@ fn the_ring_world_saves_its_locations_and_never_its_grass() {
     assert!(save.edits.log.is_empty(), "{:?}", save.edits);
     assert!(!save.frozen.is_empty());
     assert!(save.frozen.iter().all(|chunk| chunk.stage == "locations"));
+}
+
+/// A pack whose frozen stage `map` is `kind`.
+fn frozen_map(kind: &str) -> Arc<Pack> {
+    Arc::new(
+        Pack::parse(&format!(
+            r#"(version: 1, stages: [
+                (name: "ground", kind: Field(Noise(frequency: 0.05, octaves: 2))),
+                (name: "map", persist: Frozen, kind: {kind}),
+            ])"#
+        ))
+        .expect("a valid pack"),
+    )
+}
+
+/// A save of `map` generated around chunk (0, 0) in chunks `size` columns a side.
+fn saved_map(kind: &str, size: [u32; 2]) -> Save {
+    let mut runtime = Runtime::new(frozen_map(kind), 2, size);
+    runtime
+        .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], &["map"])
+        .expect("stages");
+    runtime.run_until_idle().expect("the stages run");
+    runtime.save()
+}
+
+const FIELD: &str = r#"Field(Mul(Input("ground"), Constant(10.0)))"#;
+const RULES: &str = r#"Rules(rules: [(category: "high", when: [Greater(Input("ground"), Constant(0.0))])], otherwise: "low")"#;
+
+#[test]
+fn a_frozen_chunk_whose_stage_now_makes_another_kind_is_left_out() {
+    let save = saved_map(FIELD, [8, 8]);
+    let mut runtime = Runtime::new(frozen_map(RULES), 2, [8, 8]);
+
+    let dropped = runtime.load(&save).expect("a save");
+
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert!(runtime.save().frozen.is_empty());
+}
+
+#[test]
+fn a_frozen_chunk_of_another_chunk_size_is_refused() {
+    let save = saved_map(FIELD, [8, 8]);
+    let mut runtime = Runtime::new(frozen_map(FIELD), 2, [16, 16]);
+
+    let result = runtime.load(&save);
+
+    assert!(
+        matches!(&result, Err(StageError::Frozen { stage, .. }) if stage == "map"),
+        "{result:?}"
+    );
+    assert!(runtime.save().frozen.is_empty(), "nothing changes");
 }

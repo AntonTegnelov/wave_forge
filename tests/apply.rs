@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::regions::{Attempt, Curve, CurveId, Edge, RegionInput, RegionJob};
-use wave_forge::stages::{Facts, GivenRow, Pack, Runtime, StageError, Value};
+use wave_forge::stages::{Facts, GivenRow, Pack, RowId, Runtime, StageError, Value};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const SIZE: [u32; 2] = [8, 8];
@@ -239,4 +239,80 @@ fn rivers_carve_their_beds_without_seams_across_region_borders() {
             "the border at x = {border}"
         );
     }
+}
+
+#[test]
+fn focusing_a_road_keeps_the_curves_and_the_ground_drawn_from_its_table() {
+    let mut runtime = runtime(vec![
+        road(1, (4.0, 4.0), (40.0, 4.0), 2.0),
+        road(2, (4.0, 30.0), (40.0, 30.0), 1.0),
+    ])
+    .expect("roads");
+    columns(&mut runtime, "paved", &[area()]);
+
+    let dropped = runtime.focus("roads", RowId(vec![2])).expect("a row");
+
+    assert!(dropped.is_empty(), "{dropped:?}");
+}
+
+/// A region job whose one curve has a value fewer than it has points.
+struct ShortRivers;
+
+impl RegionJob for ShortRivers {
+    fn run(&self, input: &RegionInput<'_>) -> Result<Attempt, StageError> {
+        Ok(Attempt::Accepted(vec![Curve {
+            id: CurveId::Region {
+                region: input.region(),
+                index: 0,
+            },
+            points: vec![[0.0, 4.0], [8.0, 4.0], [16.0, 4.0]],
+            values: vec![2.0, 1.0],
+            heights: Vec::new(),
+        }]))
+    }
+}
+
+#[test]
+fn a_region_jobs_curve_of_fewer_values_than_points_is_refused() {
+    const RIVERS: &str = r#"(
+        version: 1,
+        stages: [
+            (name: "ground", kind: Field(Constant(0.0))),
+            (name: "rivers", kind: Region(job: "rivers", region: 2)),
+            (name: "carved", kind: Apply(height: "ground", curves: "rivers", max_radius: 3, profile: Carve(1.5))),
+        ],
+    )"#;
+    let mut runtime = Runtime::new(
+        Arc::new(Pack::parse(RIVERS).expect("a valid pack")),
+        4,
+        SIZE,
+    )
+    .with_region_job("rivers", ShortRivers);
+    runtime
+        .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], &["carved"])
+        .expect("a stage");
+
+    let result = runtime.run_until_idle();
+
+    assert!(
+        matches!(&result, Err(StageError::Curve { stage, .. }) if stage == "rivers"),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_road_across_more_of_the_lattice_than_a_curve_may_reach_is_refused() {
+    let across = runtime(vec![road(1, (0.0, 0.0), (1e9, 1e9), 1.0)]);
+    let far_out = runtime(vec![road(1, (1e12, 0.0), (1e12, 10.0), 1.0)]);
+
+    assert!(
+        matches!(&across, Err(StageError::Table { table, .. }) if table == "roads"),
+        "{:?}",
+        across.map(|_| ())
+    );
+    assert!(
+        matches!(&far_out, Err(StageError::Table { table, .. }) if table == "roads"),
+        "{:?}",
+        far_out.map(|_| ())
+    );
 }

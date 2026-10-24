@@ -8,6 +8,7 @@
 //! asked for in, each is computed from the same inputs and comes out the same.
 
 use super::assemble::Growth;
+use super::brushes::{MAX_BRUSH_RADIUS, MAX_COORDINATE};
 use super::caves::{self, CavePlan, CaveRules};
 use super::connected::connected;
 use super::droplets::{Droplets, drain, droplet_start};
@@ -368,6 +369,68 @@ pub enum Product {
 }
 
 impl Product {
+    /// The kind of output a stage of this product makes.
+    const fn output(&self) -> Output {
+        match self {
+            Self::Field(_) => Output::Field,
+            Self::Volume(_) => Output::Volume,
+            Self::Categories(_) => Output::Categories,
+            Self::Sites(_) => Output::Sites,
+            Self::Tiles(_) => Output::Tiles,
+            Self::Points(_) => Output::Points,
+            Self::Curves(_) => Output::Curves,
+            Self::Stamps(_) => Output::Pieces,
+        }
+    }
+
+    /// Why this product cannot be chunk `chunk` of a runtime of chunks `size` columns a side, if
+    /// it cannot: it holds another chunk, has another size, or has too few or too many values.
+    fn misfit(&self, chunk: ChunkCoord, size: [u32; 2]) -> Option<String> {
+        let (own, columns, values, levels) = match self {
+            Self::Field(field) => (field.chunk, field.size, field.values.len(), 1),
+            Self::Categories(categories) => (
+                categories.chunk,
+                categories.size,
+                categories.values.len(),
+                1,
+            ),
+            Self::Volume(volume) => {
+                if !volume.materials.is_empty() && volume.materials.len() != volume.values.len() {
+                    return Some(format!(
+                        "it has {} materials for {} values",
+                        volume.materials.len(),
+                        volume.values.len()
+                    ));
+                }
+                (
+                    volume.chunk,
+                    [volume.size[0], volume.size[1]],
+                    volume.values.len(),
+                    volume.size[2],
+                )
+            }
+            Self::Sites(_)
+            | Self::Tiles(_)
+            | Self::Points(_)
+            | Self::Curves(_)
+            | Self::Stamps(_) => {
+                return None;
+            }
+        };
+        let expected = u64::from(columns[0]) * u64::from(columns[1]) * u64::from(levels);
+        if own != chunk {
+            Some(format!("it holds chunk {own:?}"))
+        } else if columns != size {
+            Some(format!(
+                "it is {columns:?} columns, the runtime's chunks {size:?}"
+            ))
+        } else if values as u64 != expected {
+            Some(format!("it has {values} values for {expected} places"))
+        } else {
+            None
+        }
+    }
+
     /// The footprints of a sites stage's sites or an Assemble stage's pieces, each with what names
     /// it.
     fn levelled(&self, size: [u32; 2]) -> Vec<(LevelledId, Levelled)> {
@@ -486,11 +549,12 @@ pub enum StageError {
     NoTownSolver(String),
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
-    /// Only stages computed column by column from what they read (Field, Rules, Nearest, Blur,
-    /// Delta, Horizon, Erode and Area stages over such stages) can be sampled without chunks.
+    /// Only stages computed column by column from what they read, or over a region of such
+    /// stages, can be sampled without chunks ([`Runtime::sample`]).
     #[error(
-        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, nearest, blur, delta, \
-         horizon or area stage"
+        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, nearest, painted, \
+         blur, delta, horizon, erode, area, lakes, droplets, talus, connected or passages stage over \
+         such stages"
     )]
     NotSampled(String),
     /// Only a Sites stage's sites, a hash of their region, can be found without chunks.
@@ -538,6 +602,14 @@ pub enum StageError {
     TownsStopped,
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A frozen chunk from a save or a store was generated for chunks of another size than the
+    /// runtime's, or does not hold the chunk it is kept as.
+    #[error("the frozen chunk {chunk:?} of stage {stage:?} does not fit the runtime: {message}")]
+    Frozen {
+        stage: String,
+        chunk: ChunkCoord,
+        message: String,
+    },
     #[error("stage {stage:?} could not solve the town of {site:?}: {message}")]
     Town {
         stage: String,
@@ -814,14 +886,30 @@ impl Ball {
     /// The chunks of a stage of `scale` with chunks of `size` columns whose voxels the ball can
     /// change: those within a cell of it.
     fn chunks(&self, scale: u32, size: [u32; 2]) -> BTreeSet<ChunkCoord> {
-        let reach = self.radius + CARVE_MARGIN;
-        let chunk =
-            |cells: f32, axis: usize| (cells / scale as f32 / size[axis] as f32).floor() as i32;
-        let (x0, x1) = (chunk(self.at[0] - reach, 0), chunk(self.at[0] + reach, 0));
-        let (y0, y1) = (chunk(self.at[1] - reach, 1), chunk(self.at[1] + reach, 1));
+        let [(x0, x1), (y0, y1)] = self.chunk_span(scale, size);
         (y0..=y1)
             .flat_map(|y| (x0..=x1).map(move |x| ChunkCoord::new(x, y, 0)))
             .collect()
+    }
+
+    /// Whether the ball can change a voxel of `chunk` of a stage of `scale` with chunks of `size`
+    /// columns: whether `chunk` is one of [`Ball::chunks`].
+    fn reaches(&self, chunk: ChunkCoord, scale: u32, size: [u32; 2]) -> bool {
+        let [(x0, x1), (y0, y1)] = self.chunk_span(scale, size);
+        (x0..=x1).contains(&chunk.x) && (y0..=y1).contains(&chunk.y)
+    }
+
+    /// The lowest and highest chunk along x and along y of [`Ball::chunks`].
+    fn chunk_span(&self, scale: u32, size: [u32; 2]) -> [(i32, i32); 2] {
+        let reach = self.radius + CARVE_MARGIN;
+        let chunk =
+            |cells: f32, axis: usize| (cells / scale as f32 / size[axis] as f32).floor() as i32;
+        [0, 1].map(|axis| {
+            (
+                chunk(self.at[axis] - reach, axis),
+                chunk(self.at[axis] + reach, axis),
+            )
+        })
     }
 
     /// `value` of the voxel centred at `voxel`, in cells, dug or filled by the ball.
@@ -994,14 +1082,29 @@ impl Runtime {
         for row in &rows.rows {
             let curve = self.table_curve(index, rows, row);
             let radius = curve.values[0];
-            let finite = curve.points.iter().flatten().all(|value| value.is_finite());
-            if !finite || !(0.0..=widest.map_or(f32::MAX, |widest| widest as f32)).contains(&radius)
+            let finite = curve
+                .points
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite() && value.abs() <= MAX_COORDINATE);
+            // The chunks a curve is drawn in are found over its extent, so a curve across a
+            // continent is fine and one across the whole lattice is not.
+            let extent = (0..2).all(|axis| {
+                let along = curve.points.iter().map(|point| point[axis]);
+                along.clone().fold(f32::MIN, f32::max) - along.fold(f32::MAX, f32::min)
+                    <= MAX_CURVE_EXTENT
+            });
+            if !finite
+                || !extent
+                || !(0.0..=widest.map_or(f32::MAX, |widest| widest as f32)).contains(&radius)
             {
                 return Err(StageError::Table {
                     table: table.clone(),
                     message: format!(
                         "stage {:?}: row {:?} makes a curve through {:?} of radius {radius}; \
-                         points are finite and a radius is from 0 to {}",
+                         points lie within {MAX_COORDINATE} cells of the origin and \
+                         {MAX_CURVE_EXTENT} of each other along each axis, and a radius is from \
+                         0 to {}",
                         stage.name,
                         row.id.0,
                         curve.points,
@@ -1143,8 +1246,14 @@ impl Runtime {
         let mut footprints: Vec<Footprint> = Vec::with_capacity(rows.rows.len());
         for row in &rows.rows {
             let (at, side) = ([row.values[x], row.values[y]], row.values[side]);
-            if !(at[0].is_finite() && at[1].is_finite()) {
-                return Err(failed(format!("row {:?} stands at {at:?}", row.id.0)));
+            if !at
+                .iter()
+                .all(|value| value.is_finite() && value.abs() <= MAX_COORDINATE)
+            {
+                return Err(failed(format!(
+                    "row {:?} stands at {at:?}, beyond {MAX_COORDINATE} cells of the origin",
+                    row.id.0
+                )));
             }
             if side.fract() != 0.0 || !(1.0..=*max_size as f32).contains(&side) {
                 return Err(failed(format!(
@@ -1214,7 +1323,13 @@ impl Runtime {
             .iter()
             .enumerate()
             .filter(|(_, stage)| {
-                stage.tables.contains(&index) && !matches!(stage.kind, StageKind::TableSites { .. })
+                // A TableSites or TableCurves stage lists the table it draws, which a focused row
+                // does not change; only `Row` expressions read the focused row.
+                stage.tables.contains(&index)
+                    && !matches!(
+                        stage.kind,
+                        StageKind::TableSites { .. } | StageKind::TableCurves { .. }
+                    )
             })
             .map(|(reader, _)| (reader, Stale::All))
             .collect();
@@ -1384,7 +1499,8 @@ impl Runtime {
             }
             let stage = &self.pack.stages[index];
             // A chunk asked for may already have a town or a region behind it, so those count
-            // with the chunks held.
+            // with the chunks held, and so does a region computed for chunks no longer asked for,
+            // which a bounded world keeps.
             let candidates: BTreeSet<ChunkCoord> = self
                 .needed
                 .get(&index)
@@ -1397,6 +1513,7 @@ impl Runtime {
                         .filter(|(held, _)| *held == index)
                         .map(|&(_, chunk)| chunk),
                 )
+                .chain(self.computed_region_chunks(index))
                 .collect();
             let mut chunks = match stale.remove(&index) {
                 Some(Stale::Chunks(chunks)) => chunks,
@@ -1520,6 +1637,58 @@ impl Runtime {
             }
         }
         Ok(dropped)
+    }
+
+    /// The first chunk of each region stage `index` has computed: a region job's curves, a
+    /// Locations stage's places, a region field, or a cave's plan, tunnels or budgeted points.
+    fn computed_region_chunks(&self, index: usize) -> Vec<ChunkCoord> {
+        let first = |size: u32, region: (i32, i32)| {
+            ChunkCoord::new(region.0 * size as i32, region.1 * size as i32, 0)
+        };
+        let of_stage = (index, (i32::MIN, i32::MIN))..=(index, (i32::MAX, i32::MAX));
+        let kind = &self.pack.stages[index].kind;
+        let mut chunks: Vec<ChunkCoord> = Vec::new();
+        if let Some(size) = kind.job_region() {
+            chunks.extend(
+                self.regions
+                    .range(of_stage.clone())
+                    .map(|(&(_, region), _)| first(size, region)),
+            );
+        }
+        if let StageKind::Locations { region: size, .. } = *kind {
+            chunks.extend(
+                self.placed
+                    .range(of_stage.clone())
+                    .map(|(&(_, region), _)| first(size, region)),
+            );
+        }
+        if let Some(size) = kind.field_region() {
+            chunks.extend(
+                self.region_fields
+                    .range(of_stage.clone())
+                    .map(|(&(_, region), _)| first(size, region)),
+            );
+        }
+        let caves: Vec<(i32, i32)> = self
+            .caves
+            .range(of_stage.clone())
+            .map(|(&(_, region), _)| region)
+            .chain(
+                self.tunnels
+                    .range(of_stage.clone())
+                    .map(|(&(_, region), _)| region),
+            )
+            .chain(
+                self.budgeted
+                    .range(of_stage)
+                    .map(|(&(_, region), _)| region),
+            )
+            .collect();
+        if !caves.is_empty() {
+            let size = self.pack.cave_region(index);
+            chunks.extend(caves.into_iter().map(|region| first(size, region)));
+        }
+        chunks
     }
 
     /// How many regions the runtime holds computed, of every kind of region stage.
@@ -1647,7 +1816,9 @@ impl Runtime {
     }
 
     /// What a save keeps of the world: the edits, less those of ephemeral stages, and every chunk
-    /// of a frozen stage generated so far, with the Wave Forge version and the pack's digest.
+    /// of a frozen stage generated so far, with the Wave Forge version and the pack's digest. A
+    /// runtime with a store keeps only the frozen chunks it holds in memory; the store has the
+    /// rest.
     #[must_use]
     pub fn save(&self) -> Save {
         let ephemeral = |stage: usize| self.pack.stages[stage].persist == Persist::Ephemeral;
@@ -1680,22 +1851,37 @@ impl Runtime {
 
     /// Brings a world back from `save`: its edits, and the chunks of the stages this pack
     /// freezes as they were first generated, even if the pack has changed since. A frozen chunk
-    /// of a stage this pack does not freeze, or does not have, is left out. Drops what the save
-    /// changes and returns it as [`Runtime::request`] does. On an error nothing changes.
+    /// of a stage this pack does not freeze, or does not have, or that now makes another kind of
+    /// product, is left out. Drops what the save changes and returns it as [`Runtime::request`]
+    /// does. On an error nothing changes.
     ///
     /// # Errors
-    /// [`StageError::Edit`] as [`Runtime::set_edits`].
+    /// [`StageError::Edit`] as [`Runtime::set_edits`], and [`StageError::Frozen`] for a frozen
+    /// chunk of another chunk size than the runtime's.
     pub fn load(&mut self, save: &Save) -> Result<Vec<(String, ChunkCoord)>, StageError> {
-        let mut dropped = self.set_edits(&save.edits)?;
-        let mut stale: BTreeMap<usize, Stale> = BTreeMap::new();
+        // A chunk of a stage that now makes another kind of product is left out, as one of a
+        // stage the pack no longer freezes is; one that does not fit the runtime's chunks is the
+        // game's mistake and refused before anything changes.
+        let mut kept: Vec<(usize, &FrozenChunk)> = Vec::new();
         for frozen in &save.frozen {
-            let Some(index) = self
-                .pack
-                .index(&frozen.stage)
-                .filter(|&index| self.pack.stages[index].persist == Persist::Frozen)
-            else {
+            let Some(index) = self.pack.index(&frozen.stage).filter(|&index| {
+                let stage = &self.pack.stages[index];
+                stage.persist == Persist::Frozen && stage.kind.output() == frozen.product.output()
+            }) else {
                 continue;
             };
+            if let Some(message) = frozen.product.misfit(frozen.chunk, self.size) {
+                return Err(StageError::Frozen {
+                    stage: frozen.stage.clone(),
+                    chunk: frozen.chunk,
+                    message,
+                });
+            }
+            kept.push((index, frozen));
+        }
+        let mut dropped = self.set_edits(&save.edits)?;
+        let mut stale: BTreeMap<usize, Stale> = BTreeMap::new();
+        for (index, frozen) in kept {
             self.frozen
                 .insert((index, frozen.chunk), Arc::new(frozen.product.clone()));
             match stale
@@ -1744,6 +1930,16 @@ impl Runtime {
                         .ok_or_else(|| {
                             StageError::Edit(format!("{stage:?} is no field stage to raise"))
                         })?;
+                    if !(by.is_finite()
+                        && [column.0, column.1]
+                            .iter()
+                            .all(|&c| c.unsigned_abs() <= MAX_COORDINATE as u64))
+                    {
+                        return Err(StageError::Edit(format!(
+                            "a raise of {by} at {column:?}; a column lies within \
+                             {MAX_COORDINATE} cells of the origin"
+                        )));
+                    }
                     *folded.raised.entry((index, *column)).or_default() += by;
                 }
                 Edit::Dig { stage, at, radius } | Edit::Fill { stage, at, radius } => {
@@ -1754,9 +1950,12 @@ impl Runtime {
                         .ok_or_else(|| {
                             StageError::Edit(format!("{stage:?} is no volume to dig or fill"))
                         })?;
-                    if !(radius.is_finite() && *radius > 0.0 && at.iter().all(|a| a.is_finite())) {
+                    let near = |a: &f32| a.is_finite() && a.abs() <= MAX_COORDINATE;
+                    if !(*radius > 0.0 && *radius <= MAX_BRUSH_RADIUS && at.iter().all(near)) {
                         return Err(StageError::Edit(format!(
-                            "a ball of radius {radius} at {at:?}"
+                            "a ball of radius {radius} at {at:?}; a radius is above 0 and at \
+                             most {MAX_BRUSH_RADIUS} cells, within {MAX_COORDINATE} cells of the \
+                             origin"
                         )));
                     }
                     let fill = matches!(edit, Edit::Fill { .. });
@@ -1798,12 +1997,13 @@ impl Runtime {
             Product::Field(mut field) => {
                 let [sx, sy] = [i64::from(field.size[0]), i64::from(field.size[1])];
                 let (x0, y0) = (i64::from(field.chunk.x) * sx, i64::from(field.chunk.y) * sy);
+                // Raises are ordered by column x first, so only the chunk's x span is visited.
                 for (&(_, (x, y)), by) in self
                     .edits
                     .raised
-                    .range((index, (i64::MIN, i64::MIN))..=(index, (i64::MAX, i64::MAX)))
+                    .range((index, (x0, i64::MIN))..=(index, (x0 + sx - 1, i64::MAX)))
                 {
-                    if (x0..x0 + sx).contains(&x) && (y0..y0 + sy).contains(&y) {
+                    if (y0..y0 + sy).contains(&y) {
                         field.values[((y - y0) * sx + (x - x0)) as usize] += by;
                     }
                 }
@@ -1823,14 +2023,12 @@ impl Runtime {
                     .collect(),
             ),
             Product::Volume(mut volume) => {
-                let scale = self.pack.stages[index].scale as f32;
+                let stage_scale = self.pack.stages[index].scale;
+                let scale = stage_scale as f32;
                 let [sx, sy, levels] = volume.size;
-                for &(_, ball) in self
-                    .edits
-                    .shaped
-                    .iter()
-                    .filter(|(stage, _)| *stage == index)
-                {
+                for &(_, ball) in self.edits.shaped.iter().filter(|(stage, ball)| {
+                    *stage == index && ball.reaches(volume.chunk, stage_scale, [sx, sy])
+                }) {
                     for level in 0..levels {
                         let z = ((volume.bottom + level as i32) as f32 + 0.5) * scale;
                         for y in 0..sy {
@@ -1900,6 +2098,17 @@ impl Runtime {
                      {error}"
             ))
         })?;
+        // A stored chunk of a stage that now makes another kind of product is generated anew.
+        if product.output() != self.pack.stages[index].kind.output() {
+            return Ok(None);
+        }
+        if let Some(message) = product.misfit(chunk, self.size) {
+            return Err(StageError::Frozen {
+                stage: stage.clone(),
+                chunk,
+                message,
+            });
+        }
         let product = Arc::new(product);
         self.frozen.insert((index, chunk), Arc::clone(&product));
         Ok(Some(product))
@@ -2206,12 +2415,24 @@ impl Runtime {
     }
 
     /// A digest of what decides the products this runtime generates: the pack, the seed, the
-    /// chunks' columns, the facts, the edits, the parameters, the noises and the focused rows. A
-    /// world run keeps it with each chunk and generates a chunk again whose digest differs. The
-    /// towns' rule sets and region jobs a game gives in code are not in it.
+    /// chunks' columns, the facts, the edits, the parameters, the noises, the focused rows and the
+    /// paintings. A world run keeps it with each chunk and generates a chunk again whose digest
+    /// differs. The towns' rule sets and region jobs a game gives in code are not in it.
     pub(crate) fn content_digest(&self) -> u64 {
+        let paintings =
+            self.paintings
+                .iter()
+                .fold(0xCBF2_9CE4_8422_2325, |hash, (name, painting)| {
+                    let hash = super::codec::fnv(hash, name.as_bytes());
+                    let hash = super::codec::fnv(hash, &painting.width.to_le_bytes());
+                    let hash = super::codec::fnv(hash, &painting.height.to_le_bytes());
+                    painting
+                        .pixels
+                        .iter()
+                        .fold(hash, |hash, pixel| super::codec::fnv(hash, pixel))
+                });
         super::pack::digest(&format!(
-            "{} {} {:?} {} {} {:?} {} {:?}",
+            "{} {} {:?} {} {} {:?} {} {:?} {paintings}",
             self.pack.digest(),
             self.seed,
             self.size,
@@ -2350,15 +2571,26 @@ impl Runtime {
         };
         // Starting a thread costs some tens of microseconds, more than most products take, so a
         // stage's chunks are shared out only when, by what its products have cost so far, they
-        // come to more than a few milliseconds.
+        // come to more than a few milliseconds. A stage that has made none yet is timed on its
+        // first chunk alone, so a first batch of costly products is shared out too.
         let timing = &self.timings[index];
-        let expected_ms = timing.ms / timing.products.max(1) as f64 * chunks.len() as f64;
-        let threads = if expected_ms < PARALLEL_MS {
+        let mut generated: Vec<Generated> = Vec::with_capacity(chunks.len());
+        let (each_ms, rest) = match (timing.products, chunks.split_first()) {
+            (0, Some((&first, rest))) => {
+                let first = timed(first);
+                let each_ms = first.as_ref().map_or(0.0, |&(_, ms)| ms);
+                generated.push(first);
+                (each_ms, rest)
+            }
+            _ => (timing.ms / timing.products.max(1) as f64, &chunks[..]),
+        };
+        let threads = if each_ms * (rest.len() as f64) < PARALLEL_MS {
             1
         } else {
-            self.threads.get().min(chunks.len())
+            self.threads.get().min(rest.len())
         };
-        map_on_threads(threads, &chunks, |&chunk| timed(chunk))
+        generated.extend(map_on_threads(threads, rest, |&chunk| timed(chunk)));
+        generated
     }
 
     /// Each stage's needed chunks that are not generated yet, farthest from the focus first, so
@@ -2479,9 +2711,10 @@ impl Runtime {
 
     /// A stage's value at a point in WFC cells without generating any chunk: a field's value, or a
     /// category's index, at the column of the stage the point lies in. It equals what the chunk
-    /// holding that column would hold. Only Field, Rules, Blur, Delta, Horizon, Erode and Area stages, and
-    /// Lakes and Droplets stages, whose inputs are too can be sampled; the pack's other kinds need
-    /// neighbouring chunks. A Lakes or Droplets stage is computed over the whole region a sample
+    /// holding that column would hold. Only Field, Rules, Nearest, Painted, Blur, Delta, Horizon,
+    /// Erode and Area stages, and Lakes, Droplets, Talus, Connected and Passages stages, whose
+    /// inputs are too can be sampled; the pack's other kinds need neighbouring chunks. A Lakes,
+    /// Droplets, Talus, Connected or Passages stage is computed over the whole region a sample
     /// lies in, once, from samples of its input. A runtime made only to sample
     /// never holds a product, so a game can keep one on any thread.
     ///
@@ -2945,7 +3178,7 @@ impl Runtime {
             }
         }
         let inside = |site: &Site| {
-            let centre = |low: i32, high: i32| (i64::from(low) + i64::from(high)) / 2;
+            let centre = |low: i32, high: i32| (i64::from(low) + i64::from(high)).div_euclid(2);
             region_of(
                 ChunkCoord::new(
                     centre(site.min.0, site.max.0) as i32,
@@ -2970,6 +3203,41 @@ impl Runtime {
             input.retry = retry;
             match job.run(&input)? {
                 Attempt::Accepted(curves) => {
+                    // The job is the game's code, so its curves are checked once here rather than
+                    // trusted by every stage that draws them.
+                    for curve in &curves {
+                        let finite = curve
+                            .points
+                            .iter()
+                            .flatten()
+                            .chain(&curve.values)
+                            .chain(&curve.heights)
+                            .all(|value| value.is_finite());
+                        let message = if curve.values.len() != curve.points.len() {
+                            format!(
+                                "it has {} values for {} points",
+                                curve.values.len(),
+                                curve.points.len()
+                            )
+                        } else if !curve.heights.is_empty()
+                            && curve.heights.len() != curve.points.len()
+                        {
+                            format!(
+                                "it has {} heights for {} points",
+                                curve.heights.len(),
+                                curve.points.len()
+                            )
+                        } else if !finite {
+                            "its points, values and heights are not all finite".to_owned()
+                        } else {
+                            continue;
+                        };
+                        return Err(StageError::Curve {
+                            stage: stage.name.clone(),
+                            curve: curve.id.clone(),
+                            message,
+                        });
+                    }
                     self.regions.insert(
                         (index, region),
                         ComputedRegion {
@@ -3195,6 +3463,8 @@ impl Runtime {
         };
         let input = self.pack.index(height).expect("linked when loaded");
         let ratio = self.pack.stages[input].scale / stage.scale;
+        // A Connected stage reads categories, which take the covering column's, as generation does.
+        let categorical = self.pack.stages[input].kind.output() == Output::Categories;
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
         let side = i64::from(size);
         let min = [
@@ -3207,9 +3477,13 @@ impl Runtime {
             // column of every stage it reads.
             let memo = RefCell::new(HashMap::new());
             for x in 0..side * sx {
-                heights.push(between(ratio, false, min[0] + x, min[1] + y, |x, y| {
-                    self.sample_column(input, [x, y], &memo)
-                })?);
+                heights.push(between(
+                    ratio,
+                    categorical,
+                    min[0] + x,
+                    min[1] + y,
+                    |x, y| self.sample_column(input, [x, y], &memo),
+                )?);
             }
         }
         let field: Arc<[f32]> = Arc::from(self.region_field(index, region, &heights));
@@ -4643,8 +4917,6 @@ impl Runtime {
         }))
     }
 
-    /// Apply stage `index`'s field for `chunk`: its height with the curves near each column drawn
-    /// in.
     /// Carve stage `index`'s volume for `chunk`: its input volume there with its levelled sites'
     /// slabs filled and the air above them emptied, then each voxel less than a cell outside a
     /// tunnel or room, or inside one, lowered to how far outside the nearest it is.
@@ -4861,6 +5133,8 @@ impl Runtime {
         Ok(carved)
     }
 
+    /// Apply stage `index`'s field for `chunk`: its height with the curves near each column drawn
+    /// in.
     fn apply(&self, index: usize, chunk: ChunkCoord) -> Result<Field, StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Apply {
@@ -5192,13 +5466,20 @@ impl Runtime {
                         f32::from((rank & 0xFF) as u8) / 256.0,
                         f32::from(((rank >> 8) & 0xFF) as u8) / 256.0,
                     );
+                    // Existence has a hash of its own: drawn from `turn`, every candidate that
+                    // exists would turn by less than `chance` of a full turn.
+                    let chance = pcg3d([
+                        world ^ stage.salt ^ CHANCE_STREAM,
+                        bx as u32,
+                        (by as u32) ^ 0x5bd1_e995 ^ slot.wrapping_mul(0x9E37_79B9),
+                    ])[0];
                     candidates.push(Candidate {
                         column,
                         at: (column.0 as f32 + fraction.0, column.1 as f32 + fraction.1),
                         priority: (rank, bx, by, slot),
                         slot,
                         turn: unit(turn),
-                        exists: u64::from(turn) < threshold,
+                        exists: u64::from(chance) < threshold,
                     });
                 }
             }
@@ -5966,6 +6247,10 @@ fn barrier_value(pools: &[Pool; 2], half: f32, z: f32) -> f32 {
 /// a history sampling the regions around a spot, bounded for one sampling a whole unbounded map.
 const SAMPLED_REGIONS: usize = 8;
 
+/// The widest a TableCurves row's curve may reach along either axis, in cells: the chunks it is
+/// drawn in are found over its extent.
+pub const MAX_CURVE_EXTENT: f32 = 8192.0;
+
 /// How far outside a tunnel or room, in cells, a Carve stage still lowers a voxel.
 const CARVE_MARGIN: f32 = 1.0;
 
@@ -6216,9 +6501,6 @@ fn noise_stream(name: &str) -> u32 {
     salt(name) ^ 0x6E6F_6973
 }
 
-/// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the
-/// block and the candidate's place in it breaking ties), that place, its turn, and whether the
-/// chance test lets it exist at all.
 /// Why a Scatter stage's candidate did not become a point ([`Runtime::scatter_report`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Rejection {
@@ -6268,6 +6550,9 @@ pub struct Readings {
     pub water_depth: Option<f32>,
 }
 
+/// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the
+/// block and the candidate's place in it breaking ties), that place, its turn, and whether the
+/// chance test lets it exist at all.
 struct Candidate {
     column: (i64, i64),
     at: (f32, f32),
@@ -6277,6 +6562,8 @@ struct Candidate {
     exists: bool,
 }
 
+/// Mixed into a Scatter stage's stream for whether a candidate exists at all.
+const CHANCE_STREAM: u32 = 0x6368_6E63;
 /// Mixed into a Scatter stage's stream for how many candidates a block has.
 const COUNT_STREAM: u32 = 0x636E_7473;
 /// Mixed into a Scatter stage's stream for a group's size and its members' places.

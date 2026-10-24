@@ -1,5 +1,6 @@
-//! Scatter stages: points that keep their distance across chunk seams, pass their own tests, and
-//! come out the same whatever order chunks are asked for in.
+//! Scatter stages: points that keep their distance across chunk seams, pass their own tests, turn
+//! all the way round whatever their chance, and come out the same whatever order chunks are asked
+//! for in.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -126,4 +127,37 @@ fn every_point_passes_its_tests_and_stands_on_the_ground() {
     }
     let ids: BTreeSet<_> = all(&points).iter().map(|point| point.id).collect();
     assert_eq!(ids.len(), all(&points).len(), "every id is different");
+}
+
+#[test]
+fn a_point_turns_all_the_way_round_whatever_its_chance() {
+    let pack = Arc::new(
+        Pack::parse(
+            r#"(version: 1, stages: [
+                (name: "flat", kind: Field(Constant(0.0))),
+                (name: "rocks", kind: Scatter(kind: "rock", height: "flat", spacing: 2, chance: 0.3)),
+            ])"#,
+        )
+        .expect("a valid pack"),
+    );
+    let mut runtime = Runtime::new(pack, 9, SIZE);
+    let focus: Vec<FocusPoint> = area().iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime.request(&focus, &["rocks"]).expect("a stage");
+    runtime.run_until_idle().expect("the stages run");
+
+    let turns: Vec<f32> = area()
+        .iter()
+        .flat_map(|&chunk| runtime.points("rocks", chunk).expect("generated").to_vec())
+        .map(|point| point.turn)
+        .collect();
+
+    // A third of the candidates exist; their turns still spread over the whole turn, so about
+    // seven tenths of them lie past three tenths of it.
+    let past = turns.iter().filter(|&&turn| turn >= 0.3).count();
+    assert!(turns.len() > 500, "only {} points", turns.len());
+    assert!(
+        past * 10 > turns.len() * 6,
+        "{past} of {} turns lie past 0.3",
+        turns.len()
+    );
 }

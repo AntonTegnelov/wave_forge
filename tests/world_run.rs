@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wave_forge::stages::{Edit, Edits, Pack, RunProgress, Runtime, StageError, StageWorker};
+use wave_forge::stages::{
+    Edit, Edits, Pack, Painting, RunProgress, Runtime, StageError, StageWorker,
+};
 use wave_forge::{ChunkCoord, FrozenStore, StoreError};
 
 const PACK: &str = r#"(
@@ -245,6 +247,47 @@ fn a_run_with_other_edits_generates_again_what_a_run_without_them_kept() {
 
     let again = edited()
         .run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    assert_eq!(again.skipped, 0);
+    assert_eq!(store.0, fresh.0);
+}
+
+#[test]
+fn a_run_with_another_painting_generates_again_what_a_run_with_the_first_kept() {
+    let pack = r#"(
+        version: 1,
+        bound: Some(Rect(min: (0.0, 0.0), max: (15.0, 15.0))),
+        stages: [
+            (name: "map", kind: Painted(painting: "map", origin: (0.0, 0.0), cell: 8.0,
+                legend: [((0, 200, 0), "grass"), ((0, 0, 200), "sea")], otherwise: "void")),
+        ],
+    )"#;
+    let painted = |rgb: [u8; 4]| {
+        let mut runtime = runtime(pack);
+        runtime
+            .give_painting(
+                "map",
+                Painting {
+                    width: 2,
+                    height: 2,
+                    pixels: vec![rgb; 4],
+                },
+            )
+            .expect("a painting of the legend's colours");
+        runtime
+    };
+    let mut store = Memory::default();
+    painted([0, 200, 0, 255])
+        .run_world(&["map"], &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+    let mut fresh = Memory::default();
+    painted([0, 0, 200, 255])
+        .run_world(&["map"], &mut fresh, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    let again = painted([0, 0, 200, 255])
+        .run_world(&["map"], &mut store, |_| ControlFlow::Continue(()))
         .expect("a bounded pack");
 
     assert_eq!(again.skipped, 0);
