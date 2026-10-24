@@ -1,6 +1,6 @@
 //! A pack's stages on a thread of their own: what arrives is what a runtime on the same thread
-//! would have generated, a new request drops what it no longer needs, failures are reported, and
-//! each stage's cost is counted as a runtime counts it.
+//! would have generated, a new request drops what it no longer needs, failures are reported (a
+//! panic on the thread among them), and each stage's cost is counted as a runtime counts it.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -103,6 +103,25 @@ fn a_runtime_that_cannot_be_built_is_reported() {
     }
 
     assert_eq!(worker.failure(), Some("no device"));
+}
+
+#[test]
+fn a_panic_on_the_thread_is_reported_with_its_message() {
+    let mut worker = StageWorker::spawn(|| panic!("a broken invariant"));
+    let started = Instant::now();
+
+    while worker.failure().is_none() && started.elapsed() < Duration::from_secs(10) {
+        worker.drain();
+        std::thread::yield_now();
+    }
+
+    assert!(
+        worker
+            .failure()
+            .is_some_and(|reason| reason.contains("a broken invariant")),
+        "{:?}",
+        worker.failure()
+    );
 }
 
 #[test]

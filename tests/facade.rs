@@ -119,6 +119,29 @@ fn a_chunk_comes_back_the_same_when_its_neighbours_went_with_it() {
 }
 
 #[test]
+fn a_panic_on_the_worker_thread_is_reported_with_its_message() {
+    let broken = true;
+    let mut worker = Worker::spawn(move || {
+        assert!(!broken, "a broken invariant");
+        Ok(world(false))
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+
+    while worker.failure().is_none() && Instant::now() < deadline {
+        worker.drain();
+        std::thread::yield_now();
+    }
+
+    assert!(
+        worker
+            .failure()
+            .is_some_and(|reason| reason.contains("a broken invariant")),
+        "{:?}",
+        worker.failure()
+    );
+}
+
+#[test]
 fn a_worker_generates_on_a_thread_of_its_own() {
     let mut direct = world(false);
     direct.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
