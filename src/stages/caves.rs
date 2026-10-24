@@ -200,9 +200,16 @@ pub(crate) fn tunnel(
         index(start),
         start,
     )));
+    // A node is pushed again each time its cost improves; the distance never overestimates and a
+    // step costs at least its length, so the first time a node comes off the heap its cost is
+    // final, and the later entries, each of whose 26 steps samples the cost, are skipped.
+    let mut closed = vec![false; spent.len()];
     while let Some(Reverse((_, at_index, at))) = open.pop() {
         if at == goal {
             break;
+        }
+        if std::mem::replace(&mut closed[at_index], true) {
+            continue;
         }
         for dz in -1..=1 {
             for dy in -1..=1 {
