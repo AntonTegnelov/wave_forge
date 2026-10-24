@@ -34,6 +34,8 @@ pub struct BackendLimits {
     pub invocations_per_workgroup: u32,
     /// Workgroups one dispatch may have, which bounds a batch.
     pub workgroups: u32,
+    /// Bytes one storage buffer binding may hold, which bounds a batch's domains and checkpoints.
+    pub storage_binding: u64,
 }
 
 /// Why a backend could not do something.

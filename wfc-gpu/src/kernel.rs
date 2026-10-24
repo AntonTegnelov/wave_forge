@@ -455,6 +455,7 @@ mod tests {
             workgroup_storage,
             invocations_per_workgroup: 256,
             workgroups: 65_535,
+            storage_binding: 1 << 27,
         }
     }
 
@@ -565,6 +566,7 @@ mod tests {
             workgroup_storage: 16_384,
             invocations_per_workgroup: 256,
             workgroups: 65_535,
+            storage_binding: 1 << 27,
         };
 
         let refused = spec(81).check(&tight);

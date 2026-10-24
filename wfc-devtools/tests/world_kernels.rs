@@ -36,10 +36,13 @@ fn a_second_world_start_compiles_from_the_pipelines_the_first_cached() {
             solver.compilation().pipelines,
             solver.backend().caches_pipelines()
         );
-        solver.backend().caches_pipelines()
+        (
+            solver.backend().caches_pipelines(),
+            solver.compilation().pipelines,
+        )
     };
 
-    let cached = start("cold");
+    let (cached, compiled) = start("cold");
     let sizes: Vec<u64> = match std::fs::read_dir(&dir) {
         Ok(entries) => entries
             .flatten()
@@ -54,8 +57,15 @@ fn a_second_world_start_compiles_from_the_pipelines_the_first_cached() {
     }
 
     if cached {
-        assert_eq!(sizes.len(), 1, "one cache file for the adapter: {sizes:?}");
-        assert!(sizes[0] > 0, "the cache file holds the compiled pipelines");
+        assert_eq!(
+            sizes.len() as u64,
+            u64::from(compiled),
+            "a cache file for each kernel: {sizes:?}"
+        );
+        assert!(
+            sizes.iter().all(|&size| size > 0),
+            "each cache file holds its compiled pipeline"
+        );
     } else {
         assert!(
             sizes.is_empty(),

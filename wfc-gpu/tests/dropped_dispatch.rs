@@ -46,6 +46,7 @@ impl ComputeBackend for NothingRuns {
             workgroup_storage: 32_768,
             invocations_per_workgroup: 256,
             workgroups: 65_535,
+            storage_binding: 1 << 27,
         }
     }
 
