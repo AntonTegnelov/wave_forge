@@ -719,9 +719,10 @@ On the reference desktop, with the erosion stages the preset has gained since, a
 `roughness` regenerates the preview in 67 to 72 ms, half of it the `eroded` stage, within the
 200 ms ([measurements.md](../research/measurements.md) D22). Shown in Godot, a changed `land` or
 `roughness` drops 1 161 chunks of the near stages, since the erosion the height reads spans far
-beyond the 3 by 3 chunks, and the preview shows it in 206 to 213 ms in the dev container through
-dozen, 501 to 515 ms with the preset's far ground, which the editor's preview of the preset draws
-too (`measure_preview.gd`, E77); the reference desktop's is the desktop script's `preset` part.
+beyond the 3 by 3 chunks, and the preview shows it in 193 to 199 ms in the dev container through
+dozen, and 2 474 to 2 481 ms with the preset's far ground, which the editor's preview of the
+preset draws too and rebuilds a few coarse chunks a frame (`measure_preview.gd`, E79); the
+reference desktop's is the desktop script's `preset` part.
 
 ## M: maximal worlds
 
