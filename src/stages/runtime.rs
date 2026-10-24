@@ -6138,7 +6138,7 @@ fn horizon(
     let mut hidden = 0.0_f32;
     for direction in 0..directions {
         let angle = std::f32::consts::TAU * (direction as f32 + 0.5) / directions as f32;
-        let (along_x, along_y) = (angle.cos(), angle.sin());
+        let (along_x, along_y) = (libm::cosf(angle), libm::sinf(angle));
         // The steepest rise's tangent, never below the horizontal.
         let mut steepest = 0.0_f32;
         for step in 1..=reach {
@@ -6147,10 +6147,10 @@ fn horizon(
                 (along_y * step as f32).round() as i64,
             ];
             let rise = read(input, column[0] + offset[0], column[1] + offset[1])? - here;
-            let distance = (offset[0] as f32).hypot(offset[1] as f32) * scale as f32;
+            let distance = libm::hypotf(offset[0] as f32, offset[1] as f32) * scale as f32;
             steepest = steepest.max(rise / distance);
         }
-        hidden += steepest / steepest.hypot(1.0);
+        hidden += steepest / libm::hypotf(steepest, 1.0);
     }
     Ok(hidden / directions as f32)
 }

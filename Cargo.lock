@@ -1753,6 +1753,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "libm",
  "serde_json",
  "wave_forge",
  "wfc-core",

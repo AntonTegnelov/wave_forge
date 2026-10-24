@@ -158,7 +158,7 @@ fn run_droplet(
             direction[0] * INERTIA - slope[0] * (1.0 - INERTIA),
             direction[1] * INERTIA - slope[1] * (1.0 - INERTIA),
         ];
-        let length = direction[0].hypot(direction[1]);
+        let length = libm::hypotf(direction[0], direction[1]);
         if length == 0.0 {
             // On perfectly flat ground nothing says which way to run.
             break;
@@ -252,7 +252,7 @@ mod tests {
             .flat_map(|y| (0..64).map(move |x| (x, y)))
             .map(|(x, y)| {
                 let fall = (40.0 - x.min(40) as f32) * 0.5;
-                fall + 0.3 * ((y as f32) * 0.7).sin() * ((x as f32) * 0.3).cos()
+                fall + 0.3 * libm::sinf(y as f32 * 0.7) * libm::cosf(x as f32 * 0.3)
             })
             .collect()
     }

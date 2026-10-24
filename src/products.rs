@@ -114,7 +114,8 @@ impl InstanceSet {
             .iter()
             .zip(&self.origins)
             .flat_map(|(&turns, origin)| {
-                let (sin, cos) = YUpSpace::yaw(turns).sin_cos();
+                let yaw = YUpSpace::yaw(turns);
+                let (sin, cos) = (libm::sinf(yaw), libm::cosf(yaw));
                 [
                     cos * scale[0],
                     0.0,

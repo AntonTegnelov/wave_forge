@@ -290,12 +290,12 @@ fn ring_biome(runtime: &Runtime, column: (i64, i64)) -> &'static str {
     let height = value(runtime, "height", column);
     let wobble = value(runtime, "wobble", column);
     let noise = |name: &str| value(runtime, &format!("{name}_noise"), column);
-    let distance = x.hypot(y);
+    let distance = libm::hypotf(x, y);
     if height < 0.05 {
         "sea"
-    } else if x.hypot(y + 35.0) > 110.0 + wobble {
+    } else if libm::hypotf(x, y + 35.0) > 110.0 + wobble {
         "glacier"
-    } else if x.hypot(y - 35.0) > 110.0 + wobble {
+    } else if libm::hypotf(x, y - 35.0) > 110.0 + wobble {
         "volcanic"
     } else if height > 0.45 {
         "peaks"
@@ -342,7 +342,7 @@ fn the_ring_worlds_biomes_follow_its_rules() {
         // The island's bound leaves out chunks wholly beyond 110 cells from its centre.
         if runtime.categories("biome", chunk_of(column).0).is_none() {
             assert!(
-                (column.0 as f32).hypot(column.1 as f32) > 100.0,
+                libm::hypotf(column.0 as f32, column.1 as f32) > 100.0,
                 "{column:?}"
             );
             continue;

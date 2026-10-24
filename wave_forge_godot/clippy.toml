@@ -1,0 +1,2 @@
+# Engine code only draws with sines and distances; what a world holds is decided by the library,
+# whose workspace bans the platform's maths (../clippy.toml). This file stops clippy using that one.

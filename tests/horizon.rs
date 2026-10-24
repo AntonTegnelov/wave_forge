@@ -26,7 +26,7 @@ const SIZE: [u32; 2] = [8, 8];
 /// How much a bowl rising half a cell for every cell out hides from its lowest column: the sine of
 /// its walls' angle in every direction.
 fn bowl_occlusion() -> f32 {
-    0.5_f32.atan().sin()
+    libm::sinf(libm::atanf(0.5))
 }
 
 fn pack() -> Arc<Pack> {

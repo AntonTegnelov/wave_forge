@@ -171,7 +171,7 @@ mod tests {
                 0 => -0.0,
                 1 => f32::MIN_POSITIVE / 2.0,
                 2 => f32::MAX,
-                _ => (at as f32 * 0.37).sin() * 40.0,
+                _ => libm::sinf(at as f32 * 0.37) * 40.0,
             })
             .collect();
         let volume = Product::Volume(Volume {

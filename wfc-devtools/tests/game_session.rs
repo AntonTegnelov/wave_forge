@@ -73,7 +73,7 @@ fn position_at(t: f64) -> Option<(f64, f64)> {
     let mut from = START;
     let mut left = t;
     for (to, pace) in ROUTE {
-        let length = (to.0 - from.0).hypot(to.1 - from.1);
+        let length = libm::hypot(to.0 - from.0, to.1 - from.1);
         let duration = length / pace;
         if left < duration {
             let share = left / duration;
@@ -92,7 +92,7 @@ fn route_length_m() -> f64 {
     let mut from = START;
     let mut length = 0.0;
     for (to, _) in ROUTE {
-        length += (to.0 - from.0).hypot(to.1 - from.1);
+        length += libm::hypot(to.0 - from.0, to.1 - from.1);
         from = to;
     }
     length
@@ -116,7 +116,7 @@ fn in_view((x, y): (f64, f64)) -> Vec<ChunkCoord> {
             let (x0, y0) = (f64::from(cx) * CHUNK_M, f64::from(cy) * CHUNK_M);
             let dx = (x0 - x).max(x - (x0 + CHUNK_M)).max(0.0);
             let dy = (y0 - y).max(y - (y0 + CHUNK_M)).max(0.0);
-            if dx.hypot(dy) <= VIEW_M {
+            if libm::hypot(dx, dy) <= VIEW_M {
                 chunks.push(ChunkCoord::new(cx, cy, 0));
             }
         }

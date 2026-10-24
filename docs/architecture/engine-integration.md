@@ -430,7 +430,9 @@ tests compare it with Godot's C++ output: the 2D port matches it exactly on ever
 is either correctly rounded by IEEE 754 or computed by the `libm` crate: a sine, a distance, an angle,
 the place of a group's members. The platform's C library would round those differently in the last
 bit between Windows and Linux, and a comparison against a threshold could then flip for one player
-and not another. `tests/golden_stages.rs` pins a pack that exercises them, bit for bit; CI runs it on
+and not another. The root workspace's `clippy.toml` bans the standard library's versions of these
+functions, so clippy refuses a stage, a test or a tool that calls one. `tests/golden_stages.rs` pins
+a pack that exercises them, Erode, Droplets and Horizon stages included, bit for bit; CI runs it on
 Linux and `tools/measure_desktop.ps1` on Windows. On Linux, switching to `libm` changed no bit of it.
 Quantising values before discrete decisions belongs to fields on the GPU
 ([#205](https://github.com/AntonTegnelov/wave_forge/issues/205)).

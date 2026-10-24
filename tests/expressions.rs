@@ -108,12 +108,12 @@ fn coordinates_are_the_columns_centre_its_distance_and_its_angle_about_a_point()
 
     for column in columns {
         let (x, y) = (column.0 as f32 + 0.5, column.1 as f32 + 0.5);
-        let turn = (y - point.1).atan2(x - point.0) / std::f32::consts::TAU;
+        let turn = libm::atan2f(y - point.1, x - point.0) / std::f32::consts::TAU;
         assert_eq!(value(&runtime, "x", column), x);
         assert_eq!(value(&runtime, "y", column), y);
         assert_close(
             value(&runtime, "distance", column),
-            (x - point.0).hypot(y - point.1),
+            libm::hypotf(x - point.0, y - point.1),
             "distance",
         );
         assert_close(
@@ -185,7 +185,7 @@ fn every_operation_computes_its_formula() {
             ("min", v.min(0.3)),
             ("max", v.max(0.3)),
             ("abs", v.abs()),
-            ("pow", v.signum() * v.abs().powf(1.5)),
+            ("pow", v.signum() * libm::powf(v.abs(), 1.5)),
             ("floor", v.floor()),
             ("clamp", v.clamp(-0.5, 1.25)),
             ("smooth", t * t * (3.0 - 2.0 * t)),
@@ -358,7 +358,7 @@ fn a_ring_worlds_height_as_one_field_stage_matches_its_formula() {
     for column in columns {
         let n = |name: &str| value(&runtime, name, column);
         let (x, y) = (column.0 as f32 + 0.5, column.1 as f32 + 0.5);
-        let distance = x.hypot(y);
+        let distance = libm::hypotf(x, y);
         let smooth = |low: f32, high: f32, v: f32| {
             let t = ((v - low) / (high - low)).clamp(0.0, 1.0);
             t * t * (3.0 - 2.0 * t)

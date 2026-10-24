@@ -23,7 +23,10 @@ fn runtime() -> Runtime {
 fn distance(site: &Site, at: [f32; 2]) -> f32 {
     let away =
         |low: i32, high: i32, x: f32| (low as f32 * 8.0 - x).max(x - high as f32 * 8.0).max(0.0);
-    away(site.min.0, site.max.0, at[0]).hypot(away(site.min.1, site.max.1, at[1]))
+    libm::hypotf(
+        away(site.min.0, site.max.0, at[0]),
+        away(site.min.1, site.max.1, at[1]),
+    )
 }
 
 #[test]

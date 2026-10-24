@@ -113,8 +113,10 @@ fn a_group_scatters_around_its_first_point_within_its_radius() {
             continue;
         };
         for member in members {
-            let apart = (member.position[0] - first.position[0])
-                .hypot(member.position[1] - first.position[1]);
+            let apart = libm::hypotf(
+                member.position[0] - first.position[0],
+                member.position[1] - first.position[1],
+            );
             assert!(apart <= 5.0 + 1e-4, "{apart} from the group's first point");
             assert!((0.8..=1.2).contains(&member.scale), "{}", member.scale);
         }
@@ -208,7 +210,7 @@ fn a_point_leans_within_its_tilt_or_along_the_ground() {
     let (runtime, groves) = scatter("groves", &[area()]);
 
     for point in all(&tilted) {
-        let degrees = point.up[2].clamp(-1.0, 1.0).acos().to_degrees();
+        let degrees = libm::acosf(point.up[2].clamp(-1.0, 1.0)).to_degrees();
         assert!((10.0 - 1e-3..=30.0 + 1e-3).contains(&degrees), "{degrees}");
     }
     let (mut along, mut upright) = (0, 0);
@@ -433,8 +435,9 @@ fn blocking(stage: &str, requests: &[Vec<ChunkCoord>]) -> BTreeMap<ChunkCoord, V
 fn closest(a: &[Point], b: &[Point]) -> f32 {
     a.iter()
         .flat_map(|p| {
-            b.iter()
-                .map(move |q| (p.position[0] - q.position[0]).hypot(p.position[1] - q.position[1]))
+            b.iter().map(move |q| {
+                libm::hypotf(p.position[0] - q.position[0], p.position[1] - q.position[1])
+            })
         })
         .fold(f32::INFINITY, f32::min)
 }

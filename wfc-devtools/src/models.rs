@@ -380,7 +380,7 @@ mod tests {
             let base = mesh(model);
             for turns in 1..4u8 {
                 let yaw = wave_forge::YUpSpace::yaw(turns);
-                let (sin, cos) = yaw.sin_cos();
+                let (sin, cos) = (libm::sinf(yaw), libm::cosf(yaw));
                 let turned = Mesh {
                     positions: base
                         .positions

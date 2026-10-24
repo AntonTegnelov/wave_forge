@@ -10,6 +10,9 @@ description = "Developer-only tools for testing and inspecting Wave Forge output
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
+# Sines, distances and angles, computed as the library computes them, the same on every platform
+# (clippy.toml).
+libm = "0.2.16"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 # The JSON chunk of the glTF files wfc-export-models writes.
 serde_json = "1.0.151"

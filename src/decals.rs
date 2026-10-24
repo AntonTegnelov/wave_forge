@@ -62,11 +62,11 @@ pub fn curve_decals(
                     (to[0] - from[0]) * cell_size[0],
                     (to[1] - from[1]) * cell_size[2],
                 ];
-                let chord_length = chord[0].hypot(chord[1]);
+                let chord_length = libm::hypotf(chord[0], chord[1]);
                 let along = [chord[0] / chord_length, chord[1] / chord_length];
                 // Across the piece, in cells, to measure its width in the world's units.
                 let across = [-along[1] / cell_size[0], along[0] / cell_size[2]];
-                let across_cells = across[0].hypot(across[1]);
+                let across_cells = libm::hypotf(across[0], across[1]);
                 let radius = walk.radius(start).max(walk.radius(end));
                 let ground = height(middle[0].floor() as i64, middle[1].floor() as i64)?;
                 pieces.push(DecalPiece {
@@ -98,7 +98,7 @@ impl<'a> Walk<'a> {
     fn new(curve: &'a Curve) -> Self {
         let mut starts = vec![0.0];
         for pair in curve.points.windows(2) {
-            let length = (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]);
+            let length = libm::hypotf(pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]);
             starts.push(starts[starts.len() - 1] + length);
         }
         let total = starts[starts.len() - 1];

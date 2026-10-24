@@ -61,7 +61,7 @@ pub(crate) fn erode(seed: u64, salt: u32, erosion: &Erosion, at: [f32; 2], slope
         // Each octave fades out where the ground it runs along, gullies included, flattens to half
         // the slope that cuts fully: gentle ground keeps its shape, and where the slope is too
         // slight to settle a direction, which turns fast there, the octave has no depth left.
-        let length = downhill[0].hypot(downhill[1]);
+        let length = libm::hypotf(downhill[0], downhill[1]);
         let t = ((length / erosion.slope - 0.5) * 2.0).clamp(0.0, 1.0);
         let fade = t * t * (3.0 - 2.0 * t);
         if fade == 0.0 {
@@ -103,10 +103,10 @@ fn stripes(seed: u64, salt: u32, octave: u32, p: [f32; 2], across: [f32; 2]) -> 
                 y as f32 + lattice(seed, salt, 2 * octave + 1, x, y),
             ];
             let offset = [p[0] - point[0], p[1] - point[1]];
-            let weight = (-3.0 * (offset[0] * offset[0] + offset[1] * offset[1])).exp();
+            let weight = libm::expf(-3.0 * (offset[0] * offset[0] + offset[1] * offset[1]));
             let phase = TAU * (offset[0] * across[0] + offset[1] * across[1]);
-            sum += weight * phase.cos();
-            let rate = -weight * phase.sin() * TAU;
+            sum += weight * libm::cosf(phase);
+            let rate = -weight * libm::sinf(phase) * TAU;
             change[0] += rate * across[0];
             change[1] += rate * across[1];
             total += weight;
@@ -158,7 +158,7 @@ mod tests {
         for i in 0..4000 {
             let x = i as f32 * step;
             let turn = x / 30.0;
-            let slope = [0.6 * turn.cos(), 0.6 * turn.sin() * (x / 70.0)];
+            let slope = [0.6 * libm::cosf(turn), 0.6 * libm::sinf(turn) * (x / 70.0)];
             let cut = erode(11, 2, &erosion(), [x, 7.3], slope);
             if let Some(previous) = last {
                 steepest = steepest.max((cut - previous).abs());
