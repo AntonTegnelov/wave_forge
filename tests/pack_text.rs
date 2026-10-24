@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 use wave_forge::stages::{Pack, PackFile};
 
-/// Every pack file in the repository: `*.world.ron` under `examples` and the Godot project.
+/// Every pack file in the repository: `*.world.ron` under `examples`, the Godot project and the
+/// tests' fixtures, which hold the only packs with some features (authored rows, Connected and
+/// Passages stages).
 fn packs() -> Vec<PathBuf> {
     fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("a directory") {
@@ -22,6 +24,8 @@ fn packs() -> Vec<PathBuf> {
     let mut found = Vec::new();
     walk(&root.join("examples"), &mut found);
     walk(&root.join("wave_forge_godot/godot"), &mut found);
+    walk(&root.join("tests/fixtures"), &mut found);
+    walk(&root.join("wfc-devtools/tests/fixtures"), &mut found);
     found.sort();
     found
 }
