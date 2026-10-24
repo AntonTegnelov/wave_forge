@@ -130,7 +130,7 @@ func _time() -> bool:
 	if frames < TIMED_FRAMES:
 		return false
 	var ms := (Time.get_ticks_usec() - timed_usec) / 1000.0 / TIMED_FRAMES
-	gpu_ms /= TIMED_FRAMES - 1
+	gpu_ms /= TIMED_FRAMES
 	if phase == "with grass":
 		with_grass_ms = ms
 		with_grass_gpu_ms = gpu_ms
