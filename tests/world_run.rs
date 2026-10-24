@@ -190,14 +190,21 @@ fn a_run_with_another_target_adds_it_to_every_chunk_and_keeps_the_rest() {
         SIZE,
         Box::new(store),
     );
-    played.request(
-        &[wave_forge::FocusPoint::new(ChunkCoord::new(2, 2, 0), 0)],
-        &TARGETS,
-    );
+    // Every chunk of the bound, from 0 to 47 by 0 to 39 cells: 6 by 5 chunks of 8.
+    let bound: Vec<ChunkCoord> = (0..5)
+        .flat_map(|y| (0..6).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<wave_forge::FocusPoint> = bound
+        .iter()
+        .map(|&chunk| wave_forge::FocusPoint::new(chunk, 0))
+        .collect();
+    played.request(&focus, &TARGETS);
     drain_until(&mut played, |worker| {
-        TARGETS
-            .iter()
-            .all(|target| worker.product(target, ChunkCoord::new(2, 2, 0)).is_some())
+        bound.iter().all(|&chunk| {
+            TARGETS
+                .iter()
+                .all(|target| worker.product(target, chunk).is_some())
+        })
     });
 
     assert_eq!((again.done, again.skipped), (30, 0));
