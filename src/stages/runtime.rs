@@ -884,14 +884,30 @@ impl Ball {
     /// The chunks of a stage of `scale` with chunks of `size` columns whose voxels the ball can
     /// change: those within a cell of it.
     fn chunks(&self, scale: u32, size: [u32; 2]) -> BTreeSet<ChunkCoord> {
-        let reach = self.radius + CARVE_MARGIN;
-        let chunk =
-            |cells: f32, axis: usize| (cells / scale as f32 / size[axis] as f32).floor() as i32;
-        let (x0, x1) = (chunk(self.at[0] - reach, 0), chunk(self.at[0] + reach, 0));
-        let (y0, y1) = (chunk(self.at[1] - reach, 1), chunk(self.at[1] + reach, 1));
+        let [(x0, x1), (y0, y1)] = self.chunk_span(scale, size);
         (y0..=y1)
             .flat_map(|y| (x0..=x1).map(move |x| ChunkCoord::new(x, y, 0)))
             .collect()
+    }
+
+    /// Whether the ball can change a voxel of `chunk` of a stage of `scale` with chunks of `size`
+    /// columns: whether `chunk` is one of [`Ball::chunks`].
+    fn reaches(&self, chunk: ChunkCoord, scale: u32, size: [u32; 2]) -> bool {
+        let [(x0, x1), (y0, y1)] = self.chunk_span(scale, size);
+        (x0..=x1).contains(&chunk.x) && (y0..=y1).contains(&chunk.y)
+    }
+
+    /// The lowest and highest chunk along x and along y of [`Ball::chunks`].
+    fn chunk_span(&self, scale: u32, size: [u32; 2]) -> [(i32, i32); 2] {
+        let reach = self.radius + CARVE_MARGIN;
+        let chunk =
+            |cells: f32, axis: usize| (cells / scale as f32 / size[axis] as f32).floor() as i32;
+        [0, 1].map(|axis| {
+            (
+                chunk(self.at[axis] - reach, axis),
+                chunk(self.at[axis] + reach, axis),
+            )
+        })
     }
 
     /// `value` of the voxel centred at `voxel`, in cells, dug or filled by the ball.
@@ -1943,12 +1959,13 @@ impl Runtime {
             Product::Field(mut field) => {
                 let [sx, sy] = [i64::from(field.size[0]), i64::from(field.size[1])];
                 let (x0, y0) = (i64::from(field.chunk.x) * sx, i64::from(field.chunk.y) * sy);
+                // Raises are ordered by column x first, so only the chunk's x span is visited.
                 for (&(_, (x, y)), by) in self
                     .edits
                     .raised
-                    .range((index, (i64::MIN, i64::MIN))..=(index, (i64::MAX, i64::MAX)))
+                    .range((index, (x0, i64::MIN))..=(index, (x0 + sx - 1, i64::MAX)))
                 {
-                    if (x0..x0 + sx).contains(&x) && (y0..y0 + sy).contains(&y) {
+                    if (y0..y0 + sy).contains(&y) {
                         field.values[((y - y0) * sx + (x - x0)) as usize] += by;
                     }
                 }
@@ -1968,14 +1985,12 @@ impl Runtime {
                     .collect(),
             ),
             Product::Volume(mut volume) => {
-                let scale = self.pack.stages[index].scale as f32;
+                let stage_scale = self.pack.stages[index].scale;
+                let scale = stage_scale as f32;
                 let [sx, sy, levels] = volume.size;
-                for &(_, ball) in self
-                    .edits
-                    .shaped
-                    .iter()
-                    .filter(|(stage, _)| *stage == index)
-                {
+                for &(_, ball) in self.edits.shaped.iter().filter(|(stage, ball)| {
+                    *stage == index && ball.reaches(volume.chunk, stage_scale, [sx, sy])
+                }) {
                     for level in 0..levels {
                         let z = ((volume.bottom + level as i32) as f32 + 0.5) * scale;
                         for y in 0..sy {
