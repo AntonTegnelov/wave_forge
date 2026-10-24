@@ -1,7 +1,7 @@
 //! Water surfaces from a pack: a river down a valley, its bed carved 0.8 cells deep and its water
 //! 0.3 cells below the banks, and a lake in a hollow, drawn as one water mesh per chunk. The river
 //! is wet along its line, the water meets the banks with no edge in the open, and neighbouring
-//! chunks' water meets exactly.
+//! chunks' water meets exactly and is lit alike along their border.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -152,6 +152,22 @@ fn neighbouring_chunks_water_meets_exactly() {
         let on_b = b.positions[(j * 9) as usize];
         assert_eq!(on_a[1], on_b[1], "row {j}");
         assert_eq!(on_a[0] - 8.0 * CELL[0], on_b[0], "row {j}");
+    }
+}
+
+#[test]
+fn neighbouring_chunks_water_is_lit_alike_along_their_border() {
+    let runtime = runtime();
+    let (a, b) = (ChunkCoord::new(3, 4, 0), ChunkCoord::new(4, 4, 0));
+
+    let (a, b) = (water(&runtime, a), water(&runtime, b));
+
+    for j in 0..9 {
+        assert_eq!(
+            a.normals[(j * 9 + 8) as usize],
+            b.normals[(j * 9) as usize],
+            "row {j}"
+        );
     }
 }
 

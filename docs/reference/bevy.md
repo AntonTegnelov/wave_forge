@@ -113,7 +113,8 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
 - `.with_radius(stage, radius)` generates one target within a radius of its own around every
   `GenerationFocus`, the others keeping each focus's radius.
 - `.with_far_ground(stage, scale)` builds a far ground beyond the ground from a coarse field stage
-  of that scale ([packs.md](packs.md#far-ground)), one per coarse chunk, again whenever ground comes
+  of that scale ([packs.md](packs.md#far-ground)), on square chunks only (the plugin panics when
+  built otherwise), one per coarse chunk, again whenever ground comes
   or goes on or beside it: `WaveForgeStages::far_ground(chunk)` returns it, `far_ground_mesh` makes
   it a Bevy mesh to spawn at `far_ground_corner(chunk)`, and `FarGroundReady` and
   `FarGroundDropped` announce it. Give the stage a radius of its own with `.with_radius`. To

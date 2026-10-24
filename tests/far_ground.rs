@@ -498,3 +498,27 @@ fn a_far_square_is_a_coarse_column_where_a_lattice_chunk_spans_a_whole_number_of
 
     assert_eq!(steps, [2, 4, 1, 1, 1]);
 }
+
+// The far squares of a lattice chunk are counted and spaced along x and used along z, so a far
+// ground over chunks that are not square would lie in the wrong place.
+#[test]
+#[should_panic(expected = "square chunks")]
+fn a_far_ground_over_chunks_that_are_not_square_is_refused() {
+    let mut runtime = Runtime::new(
+        Arc::new(Pack::parse(PACK).expect("a valid pack")),
+        3,
+        [16, 8],
+    );
+    runtime
+        .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 9)], &["far"])
+        .expect("stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let _ = far_ground(
+        ChunkCoord::new(0, 0, 0),
+        SCALE,
+        |at| runtime.field("far", at),
+        CELL,
+        |_| None,
+    );
+}

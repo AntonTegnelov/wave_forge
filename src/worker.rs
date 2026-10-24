@@ -126,7 +126,8 @@ impl Worker {
         });
     }
 
-    /// Puts a chunk back.
+    /// Puts a chunk back, as [`WorldGenerator::import`] does. A chunk the world refuses stops the
+    /// worker, with why in [`Worker::failure`], so a game checks a chunk from outside first.
     pub fn import(&self, chunk: Chunk) {
         self.send(Command::Import(Box::new(chunk)));
     }
@@ -229,6 +230,7 @@ where
                 Ok(Command::Import(chunk)) => {
                     if let Err(error) = world.import(*chunk) {
                         let _ = reports.send(Report::Failed(error.to_string()));
+                        return;
                     }
                 }
                 Ok(Command::Stop) => return,
@@ -254,6 +256,7 @@ where
                 Ok(Command::Import(chunk)) => {
                     if let Err(error) = world.import(*chunk) {
                         let _ = reports.send(Report::Failed(error.to_string()));
+                        return;
                     }
                 }
             }

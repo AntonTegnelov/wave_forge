@@ -203,6 +203,38 @@ fn an_imported_chunk_is_reported_updated_with_the_tiles_it_was_given() {
 }
 
 #[test]
+fn running_until_idle_reports_a_chunk_imported_before_it() {
+    let mut world = world(false);
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the reference solves");
+    let coord = ChunkCoord::new(1, 1, 0);
+    world
+        .import(imported(coord))
+        .expect("a chunk of the world's shape");
+
+    let events = world.run_until_idle().expect("nothing left to generate");
+
+    assert!(events.contains(&ChunkEvent::Updated(coord)), "{events:?}");
+}
+
+#[test]
+fn a_chunk_imported_and_then_evicted_is_not_reported_updated() {
+    let mut world = world(false);
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the reference solves");
+    let coord = ChunkCoord::new(0, 0, 0);
+    world
+        .import(imported(coord))
+        .expect("a chunk of the world's shape");
+
+    let evicted = world.evict_outside(&[FocusPoint::new(ChunkCoord::new(2, 2, 0), 0)], 0);
+    let events = world.poll().expect("nothing in flight");
+
+    assert!(evicted.iter().any(|chunk| chunk.coord == coord));
+    assert!(!events.contains(&ChunkEvent::Updated(coord)), "{events:?}");
+}
+
+#[test]
 fn an_import_holding_a_tile_the_rule_set_lacks_is_refused_and_changes_nothing() {
     let mut world = world(false);
     world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
@@ -542,6 +574,28 @@ fn a_repair_reports_every_chunk_it_rewrote() {
     let origin = STUBBORN.origin(CHUNK);
     let border = [origin[0] - 1, origin[1], origin[2]];
     assert_eq!(world.store().tile(border), Some(1));
+}
+
+#[test]
+fn a_chunk_imported_while_its_repair_is_queued_is_not_repaired() {
+    let mut world = scripted();
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    // The first attempts, one batch per parity, leave the stubborn chunk failed and its repair
+    // queued.
+    for _ in 0..2 {
+        world.tick().expect("a batch starts");
+        world.wait().expect("the scripted solver");
+    }
+    assert_eq!(world.solver().batches.len(), 2, "the first attempts ran");
+
+    world
+        .import(imported(STUBBORN))
+        .expect("a chunk of the world's shape");
+    world.run_until_idle().expect("the scripted solver");
+
+    assert_eq!(world.chunk(STUBBORN), Some(&imported(STUBBORN)));
+    assert_eq!(world.solver().batches.len(), 2, "no repair ran");
+    assert_eq!(world.stats().repaired, 0);
 }
 
 /// A solver whose repairs only succeed for some seeds, and which paints each region of a batch with

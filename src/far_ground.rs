@@ -46,7 +46,7 @@ pub struct FarGround {
 /// the heights along its edges read theirs.
 ///
 /// # Panics
-/// If the fields do not all have one size, or `scale` is zero.
+/// If the fields do not all have one size, if that size is not square, or if `scale` is zero.
 #[must_use]
 pub fn far_ground<'a>(
     chunk: ChunkCoord,
@@ -60,6 +60,11 @@ pub fn far_ground<'a>(
         "a coarse stage's scale is a whole number of cells"
     );
     let own = field(chunk)?;
+    // A lattice chunk's far squares are counted, spaced and read along x and used along z too.
+    assert_eq!(
+        own.size[0], own.size[1],
+        "the far ground is built for square chunks"
+    );
     let [columns_x, columns_y] = own.size.map(i64::from);
     let mut around = [[None; 3]; 3];
     for (dy, row) in around.iter_mut().enumerate() {

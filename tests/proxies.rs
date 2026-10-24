@@ -172,3 +172,30 @@ fn a_module_without_a_colour_is_left_out() {
 
     assert!(mesh.levels.iter().all(|level| level.indices.is_empty()));
 }
+
+#[test]
+fn every_levels_boxes_stay_within_the_chunk() {
+    let mesh = proxy(|_, _, _| "red");
+    let bounds = |indices: &[u32]| {
+        let mut low = [f32::MAX; 3];
+        let mut high = [f32::MIN; 3];
+        for &i in indices {
+            for axis in 0..3 {
+                low[axis] = low[axis].min(mesh.positions[i as usize][axis]);
+                high[axis] = high[axis].max(mesh.positions[i as usize][axis]);
+            }
+        }
+        (low, high)
+    };
+
+    // The finest level's boxes are the chunk's cells, all filled.
+    let chunk = bounds(&mesh.levels[0].indices);
+    for level in &mesh.levels {
+        assert_eq!(
+            bounds(&level.indices),
+            chunk,
+            "level of {} cells",
+            level.cells
+        );
+    }
+}
