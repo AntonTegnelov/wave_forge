@@ -2206,12 +2206,24 @@ impl Runtime {
     }
 
     /// A digest of what decides the products this runtime generates: the pack, the seed, the
-    /// chunks' columns, the facts, the edits, the parameters, the noises and the focused rows. A
-    /// world run keeps it with each chunk and generates a chunk again whose digest differs. The
-    /// towns' rule sets and region jobs a game gives in code are not in it.
+    /// chunks' columns, the facts, the edits, the parameters, the noises, the focused rows and the
+    /// paintings. A world run keeps it with each chunk and generates a chunk again whose digest
+    /// differs. The towns' rule sets and region jobs a game gives in code are not in it.
     pub(crate) fn content_digest(&self) -> u64 {
+        let paintings =
+            self.paintings
+                .iter()
+                .fold(0xCBF2_9CE4_8422_2325, |hash, (name, painting)| {
+                    let hash = super::codec::fnv(hash, name.as_bytes());
+                    let hash = super::codec::fnv(hash, &painting.width.to_le_bytes());
+                    let hash = super::codec::fnv(hash, &painting.height.to_le_bytes());
+                    painting
+                        .pixels
+                        .iter()
+                        .fold(hash, |hash, pixel| super::codec::fnv(hash, pixel))
+                });
         super::pack::digest(&format!(
-            "{} {} {:?} {} {} {:?} {} {:?}",
+            "{} {} {:?} {} {} {:?} {} {:?} {paintings}",
             self.pack.digest(),
             self.seed,
             self.size,
