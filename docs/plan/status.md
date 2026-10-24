@@ -165,4 +165,6 @@ Each is a gap between the code and the design or the stories, with where it is t
   ([#348](https://github.com/AntonTegnelov/wave_forge/issues/348)).
 - **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
   Apache-2.0, Zlib or Unlicense except godot-rust (0.5.5), which is MPL-2.0: compatible, but a
-  distributed extension binary has to say where the MPL-covered source can be obtained.
+  distributed extension binary has to say where the MPL-covered source can be obtained, which the
+  addon's `LICENSE_godot-rust.txt` does. The addon also carries its CC0 assets' licences
+  (`ground_textures/LICENSE_ambientCG.txt`, `nature/LICENSE_Quaternius.txt`).

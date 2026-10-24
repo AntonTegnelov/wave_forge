@@ -1,0 +1,11 @@
+The Wave Forge extension's library (wave_forge_godot, the .so, .dll or .dylib the extension
+loads) is built from Wave Forge's own source, under the MIT License in the repository's LICENSE,
+and links godot-rust (gdext) 0.5.5: the crates godot, godot-bindings, godot-cell, godot-codegen,
+godot-core, godot-ffi and godot-macros.
+
+godot-rust is licensed under the Mozilla Public License 2.0:
+https://www.mozilla.org/en-US/MPL/2.0/
+
+Its source code is available at https://github.com/godot-rust/gdext, tag v0.5.5
+(https://github.com/godot-rust/gdext/tree/v0.5.5), and as the same crates' packages on crates.io,
+https://crates.io/crates/godot/0.5.5.

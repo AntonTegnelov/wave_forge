@@ -94,7 +94,8 @@ device policy in both engines and whether a backend over Godot's `RenderingDevic
 building. The desktop script takes it ([desktop-measurements.md](../guides/desktop-measurements.md)).
 
 **Before any release:** builds for every desktop platform the Godot Asset Store expects (Windows,
-macOS, Linux), and a note in the extension on where godot-rust's MPL-2.0 source can be obtained.
+macOS, Linux). The note on where godot-rust's MPL-2.0 source can be obtained is in the addon
+(`addons/wave_forge/LICENSE_godot-rust.txt`).
 
 ## Games, packs and repositories
 
