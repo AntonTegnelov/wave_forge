@@ -45,8 +45,11 @@ void vertex() {
 	float gust = 0.7 + 0.3 * sin(TIME * wave_forge_wind.w + phase);
 	float reach = length(VERTEX);
 	VERTEX.xz += across.xz * up * up * strength * gust;
-	// Bending keeps a vertex's distance from the root, so the plant leans rather than stretches.
-	VERTEX = normalize(VERTEX) * reach;
+	// Bending keeps a vertex's distance from the root, so the plant leans rather than stretches. A
+	// vertex at the root has no direction to keep, and does not move.
+	if (reach > 0.0) {
+		VERTEX = normalize(VERTEX) * reach;
+	}
 	float wave = sin(TIME * wave_forge_wind.w * 3.0 + phase + dot(VERTEX, vec3(2.3, 1.7, 3.1)));
 	VERTEX += NORMAL * wave * flutter * up * strength;
 }
