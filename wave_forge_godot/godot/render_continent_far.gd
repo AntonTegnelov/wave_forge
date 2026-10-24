@@ -10,6 +10,7 @@
 extends SceneTree
 
 const ReferenceLook := preload("res://reference_look.gd")
+const Generated := preload("res://generated.gd")
 const FAR_RADIUS := 128
 const TIMEOUT_S := 300.0
 ## The camera's column and the column it looks at, in cells of the lattice.
@@ -22,6 +23,8 @@ var world: Node
 var camera: Camera3D
 var started_usec := 0
 var waited_frames := 0
+## Each target's products on the frame before, by name.
+var last := {}
 
 func _initialize() -> void:
 	scene = (load("res://continent.tscn") as PackedScene).instantiate()
@@ -57,9 +60,11 @@ func _process(_delta: float) -> bool:
 		quit(1)
 		return true
 	var stats: Dictionary = world.stats()
-	if stats["pending_far_grounds"] > 0 or world.far_ground_chunks().size() < 64:
+	# Every far chunk out to the radius, nearest first, so the range 1 to 2 km away is there too.
+	if not Generated.all_generated(world, stats, last) or stats["pending_grounds"] > 0:
+		waited_frames = 0
 		return false
-	# A few frames for the renderer to draw what just arrived.
+	# A few frames with nothing new, for the renderer to draw what just arrived.
 	waited_frames += 1
 	if waited_frames < 20:
 		return false

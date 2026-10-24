@@ -15,6 +15,9 @@ extends SceneTree
 
 const PeakMemory := preload("res://peak_memory.gd")
 const LOAD_TIMEOUT_S := 300.0
+## How long the far ground has to stop growing, with nothing to build, before the view counts as
+## drawn: a played world runs no stage, so there is no count of products to wait for.
+const SETTLE_S := 2.0
 ## The first settlement's town (chunk (83, 116) in chunks of 16 m).
 const START := Vector3(1336.0, 0.0, 1864.0)
 const EYE_M := 1.7
@@ -36,6 +39,9 @@ var node_frames := PackedFloat64Array()
 ## The ground's height under the camera when last known: the played world draws the ground a
 ## moment after the camera reaches it, and before the first view none is known.
 var ground := 0.0
+## How many far chunks were drawn when the count last changed, and when.
+var far_drawn := -1
+var far_changed_usec := 0
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -98,13 +104,17 @@ func _place_camera(above: float) -> void:
 	camera.look_at_from_position(eye, eye + Vector3(1.0, -0.15, 0.0))
 
 ## Whether the near ground around the camera and the far ground beyond it are drawn, with nothing
-## of either still to build.
-func _view_drawn() -> bool:
+## of either still to build and the far ground no longer growing.
+func _view_drawn(now: int) -> bool:
+	var drawn: int = stages.far_ground_chunks().size()
+	if drawn != far_drawn:
+		far_drawn = drawn
+		far_changed_usec = now
 	var stats: Dictionary = stages.stats()
 	return stats["pending_grounds"] == 0 and stats["pending_far_grounds"] == 0 \
 		and stats["pending_placements"] == 0 and stats["pending_volumes"] == 0 \
 		and stages.ground_chunks().size() >= (2 * stages.view_radius + 1) ** 2 \
-		and not stages.far_ground_chunks().is_empty()
+		and drawn > 0 and (now - far_changed_usec) / 1e6 >= SETTLE_S
 
 func _process(_delta: float) -> bool:
 	var now := Time.get_ticks_usec()
@@ -115,7 +125,7 @@ func _process(_delta: float) -> bool:
 		if elapsed > LOAD_TIMEOUT_S:
 			_fail("the first view was not drawn in %d s" % LOAD_TIMEOUT_S)
 			return true
-		if _view_drawn():
+		if _view_drawn(now):
 			_start("walk")
 		return false
 	frames.append(frame_ms)
