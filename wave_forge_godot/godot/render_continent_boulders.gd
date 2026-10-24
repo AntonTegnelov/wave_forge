@@ -52,14 +52,28 @@ var framed := false
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var directory := ""
+	var given_at := false
 	var i := 0
-	while i + 1 < args.size():
+	while i < args.size():
+		if i + 1 >= args.size():
+			_fail("%s needs a value" % args[i])
+			return
 		match args[i]:
 			"--directory": directory = args[i + 1]
 			"--at":
 				var parts := args[i + 1].split(",")
+				if parts.size() != 2 or not parts[0].is_valid_float() or not parts[1].is_valid_float():
+					_fail("--at takes a column as <x>,<z>, not %s" % args[i + 1])
+					return
 				at = Vector3(parts[0].to_float(), 0.0, parts[1].to_float())
+				given_at = true
+			_:
+				_fail("unknown option %s" % args[i])
+				return
 		i += 2
+	if not given_at:
+		_fail("--at is needed: the column to look at")
+		return
 	if not DirAccess.dir_exists_absolute(directory):
 		_fail("--directory names no directory: %s" % directory)
 		return

@@ -33,7 +33,10 @@ var loaded := {}
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var i := 0
-	while i + 1 < args.size():
+	while i < args.size():
+		if i + 1 >= args.size():
+			_fail("%s needs a value" % args[i])
+			return
 		match args[i]:
 			"--speed": speed = args[i + 1].to_float()
 			"--seconds": seconds = args[i + 1].to_float()
