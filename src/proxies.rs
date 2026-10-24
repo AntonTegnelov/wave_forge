@@ -79,7 +79,14 @@ pub fn proxy_mesh(
     let mut cells = 1_u32;
     let mut size = dims;
     loop {
-        let indices = level_faces(&grid, size, cells, [cell_x, cell_up, cell_z], &mut mesh);
+        let indices = level_faces(
+            &grid,
+            size,
+            cells,
+            dims,
+            [cell_x, cell_up, cell_z],
+            &mut mesh,
+        );
         mesh.levels.push(ProxyLevel {
             cells,
             indices,
@@ -128,18 +135,18 @@ fn coarser(grid: &[Option<[f32; 4]>], size: [u32; 3]) -> (Vec<Option<[f32; 4]>>,
     (out, next)
 }
 
-/// Adds a level's outer faces to `mesh`: boxes of `cells` cells a side on a grid of `size`,
-/// and returns their triangles.
+/// Adds a level's outer faces to `mesh`: boxes of `cells` cells a side on a grid of `size`, cut
+/// short at the far side of a chunk of `dims` cells, and returns their triangles.
 fn level_faces(
     grid: &[Option<[f32; 4]>],
     size: [u32; 3],
     cells: u32,
+    dims: [u32; 3],
     cell: [f32; 3],
     mesh: &mut ProxyMesh,
 ) -> Vec<u32> {
     let at = |[x, y, z]: [u32; 3]| (x + size[0] * (y + size[1] * z)) as usize;
-    // A box's extent in the lattice's axes, in cells, clamped to the chunk at an odd edge.
-    let chunk_cells = [size[0] * cells, size[1] * cells, size[2] * cells];
+    // A coarse level's grid rounds the chunk up, so a box at its far side is clamped to the chunk.
     let mut indices = Vec::new();
     for z in 0..size[2] {
         for y in 0..size[1] {
@@ -148,7 +155,7 @@ fn level_faces(
                     continue;
                 };
                 let low = [x * cells, y * cells, z * cells];
-                let high = [0, 1, 2].map(|axis| (low[axis] + cells).min(chunk_cells[axis]));
+                let high = [0, 1, 2].map(|axis| (low[axis] + cells).min(dims[axis]));
                 for direction in DIRECTIONS {
                     let neighbour = [0, 1, 2]
                         .map(|axis| i64::from([x, y, z][axis]) + i64::from(direction[axis]));
