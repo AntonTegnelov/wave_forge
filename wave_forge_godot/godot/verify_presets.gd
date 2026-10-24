@@ -46,10 +46,12 @@ var last_products := {}
 
 func _initialize() -> void:
 	paths = Presets.paths()
-	if paths.is_empty():
-		_fail("no preset in %s" % Presets.DIRECTORY)
 
 func _process(_delta: float) -> bool:
+	# Checked here rather than in `_initialize`: a quit there takes effect at the end of the frame,
+	# and this frame's quit(0) below would overwrite its code.
+	if paths.is_empty():
+		return _fail("no preset in %s" % Presets.DIRECTORY)
 	if stages == null:
 		index += 1
 		if index >= paths.size():
