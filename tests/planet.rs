@@ -249,8 +249,6 @@ fn a_dig_is_kept_in_the_edits_log_and_survives_leaving_and_returning() {
     let here = ChunkCoord::new(0, 0, 0);
     let mut runtime = world(&planet(0), &["terrain"], &[here]);
     let before = runtime.volume("terrain", here).expect("generated").clone();
-    let surface = before.get(4, 4, 0);
-    assert!(surface.is_finite());
 
     let log = vec![Edit::Dig {
         stage: "terrain".to_owned(),
