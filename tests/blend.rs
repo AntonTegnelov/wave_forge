@@ -285,8 +285,11 @@ fn the_ring_worlds_terrain_steps_no_more_than_its_blend_allows() {
     let centre = ChunkCoord::new(6, 0, 0);
     let runtime = run(pack, &["terrain", "biome", "height"], centre, 6);
     let s = i64::from(SIZE[0]);
-    let columns: Vec<(i64, i64)> = (-6 * s..7 * s)
-        .flat_map(|y| (0..13 * s).map(move |x| (x, y)))
+    let (across, along) = (0..13 * s, -6 * s..7 * s);
+    let inside = |(x, y): (i64, i64)| across.contains(&x) && along.contains(&y);
+    let columns: Vec<(i64, i64)> = along
+        .clone()
+        .flat_map(|y| across.clone().map(move |x| (x, y)))
         .collect();
     let biome_at =
         |column: (i64, i64)| names[usize::from(category(&runtime, "biome", column))].as_str();
@@ -301,7 +304,7 @@ fn the_ring_worlds_terrain_steps_no_more_than_its_blend_allows() {
         let alone = (-blend..=blend).all(|dy| {
             (-blend..=blend).all(|dx| {
                 let near = (x + dx, y + dy);
-                columns.contains(&near) && biome_at(near) == own
+                inside(near) && biome_at(near) == own
             })
         });
         if alone {
@@ -313,7 +316,7 @@ fn the_ring_worlds_terrain_steps_no_more_than_its_blend_allows() {
             );
         }
         for next in [(x + 1, y), (x, y + 1)] {
-            if !columns.contains(&next) {
+            if !inside(next) {
                 continue;
             }
             let (h, h_next) = (height, value(&runtime, "height", next));
