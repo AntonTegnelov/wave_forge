@@ -549,11 +549,12 @@ pub enum StageError {
     NoTownSolver(String),
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
-    /// Only stages computed column by column from what they read (Field, Rules, Nearest, Blur,
-    /// Delta, Horizon, Erode and Area stages over such stages) can be sampled without chunks.
+    /// Only stages computed column by column from what they read, or over a region of such
+    /// stages, can be sampled without chunks ([`Runtime::sample`]).
     #[error(
-        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, nearest, blur, delta, \
-         horizon or area stage"
+        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, nearest, painted, \
+         blur, delta, horizon, erode, area, lakes, droplets, talus, connected or passages stage over \
+         such stages"
     )]
     NotSampled(String),
     /// Only a Sites stage's sites, a hash of their region, can be found without chunks.
@@ -1815,7 +1816,9 @@ impl Runtime {
     }
 
     /// What a save keeps of the world: the edits, less those of ephemeral stages, and every chunk
-    /// of a frozen stage generated so far, with the Wave Forge version and the pack's digest.
+    /// of a frozen stage generated so far, with the Wave Forge version and the pack's digest. A
+    /// runtime with a store keeps only the frozen chunks it holds in memory; the store has the
+    /// rest.
     #[must_use]
     pub fn save(&self) -> Save {
         let ephemeral = |stage: usize| self.pack.stages[stage].persist == Persist::Ephemeral;
@@ -2708,9 +2711,10 @@ impl Runtime {
 
     /// A stage's value at a point in WFC cells without generating any chunk: a field's value, or a
     /// category's index, at the column of the stage the point lies in. It equals what the chunk
-    /// holding that column would hold. Only Field, Rules, Blur, Delta, Horizon, Erode and Area stages, and
-    /// Lakes and Droplets stages, whose inputs are too can be sampled; the pack's other kinds need
-    /// neighbouring chunks. A Lakes or Droplets stage is computed over the whole region a sample
+    /// holding that column would hold. Only Field, Rules, Nearest, Painted, Blur, Delta, Horizon,
+    /// Erode and Area stages, and Lakes, Droplets, Talus, Connected and Passages stages, whose
+    /// inputs are too can be sampled; the pack's other kinds need neighbouring chunks. A Lakes,
+    /// Droplets, Talus, Connected or Passages stage is computed over the whole region a sample
     /// lies in, once, from samples of its input. A runtime made only to sample
     /// never holds a product, so a game can keep one on any thread.
     ///
@@ -4913,8 +4917,6 @@ impl Runtime {
         }))
     }
 
-    /// Apply stage `index`'s field for `chunk`: its height with the curves near each column drawn
-    /// in.
     /// Carve stage `index`'s volume for `chunk`: its input volume there with its levelled sites'
     /// slabs filled and the air above them emptied, then each voxel less than a cell outside a
     /// tunnel or room, or inside one, lowered to how far outside the nearest it is.
@@ -5131,6 +5133,8 @@ impl Runtime {
         Ok(carved)
     }
 
+    /// Apply stage `index`'s field for `chunk`: its height with the curves near each column drawn
+    /// in.
     fn apply(&self, index: usize, chunk: ChunkCoord) -> Result<Field, StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Apply {
@@ -6497,9 +6501,6 @@ fn noise_stream(name: &str) -> u32 {
     salt(name) ^ 0x6E6F_6973
 }
 
-/// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the
-/// block and the candidate's place in it breaking ties), that place, its turn, and whether the
-/// chance test lets it exist at all.
 /// Why a Scatter stage's candidate did not become a point ([`Runtime::scatter_report`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Rejection {
@@ -6549,6 +6550,9 @@ pub struct Readings {
     pub water_depth: Option<f32>,
 }
 
+/// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the
+/// block and the candidate's place in it breaking ties), that place, its turn, and whether the
+/// chance test lets it exist at all.
 struct Candidate {
     column: (i64, i64),
     at: (f32, f32),
