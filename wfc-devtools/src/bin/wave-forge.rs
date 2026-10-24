@@ -13,7 +13,8 @@ use wfc_devtools::TileGrid;
 #[derive(Parser)]
 #[command(about = "Generate a grid from a rule file (developer tool)")]
 struct Args {
-    /// RON or vox rule file describing the tiles and what may sit next to what.
+    /// RON rule file, a module set or a tile set, describing the tiles and what may sit next to
+    /// what.
     #[arg(short, long, value_name = "FILE")]
     rule_file: PathBuf,
     /// Cells along x.
