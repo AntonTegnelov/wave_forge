@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use wave_forge::stages::{Pack, Runtime};
+use wave_forge::stages::{Pack, PackError, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const PACK: &str = r#"(
@@ -155,8 +155,16 @@ fn loading_refuses_a_region_of_no_chunks_and_an_input_without_categories() {
     let none = PACK.replace("region: 4)", "region: 0)");
     let field = PACK.replace(r#"Connected(input: "land""#, r#"Connected(input: "ground""#);
 
-    assert!(Pack::parse(&none).is_err(), "a region of 0 chunks");
-    assert!(Pack::parse(&field).is_err(), "a field as the input");
+    for (text, what) in [
+        (none, "a region of 0 chunks"),
+        (field, "a field as the input"),
+    ] {
+        let result = Pack::parse(&text);
+        assert!(
+            matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "areas"),
+            "{what}: {result:?}"
+        );
+    }
 }
 
 #[test]

@@ -183,6 +183,7 @@ fn every_far_ground_a_near_ground_changes_is_one_that_reads_it() {
 
     let reading = far_chunks_reading(fine, SCALE);
 
+    let mut changed = Vec::new();
     for y in -1..=2 {
         for x in -1..=2 {
             let chunk = ChunkCoord::new(x, y, 0);
@@ -203,9 +204,12 @@ fn every_far_ground_a_near_ground_changes_is_one_that_reads_it() {
                     reading.contains(&chunk),
                     "{chunk:?} changes but is not read"
                 );
+                changed.push(chunk);
             }
         }
     }
+    // The coarse chunk the near ground lies in changes, so the check above was not vacuous.
+    assert!(changed.contains(&ChunkCoord::new(0, 0, 0)), "{changed:?}");
 }
 
 /// The near grounds of the lattice chunks from (2, 2) to (4, 4), in the middle of the coarse chunk

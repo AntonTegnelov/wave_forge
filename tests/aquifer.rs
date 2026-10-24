@@ -72,8 +72,11 @@ fn caves_below_one_pools_level_are_dry_in_another_pool() {
     let chunks = area();
     let runtime = runtime(&chunks);
 
-    // Empty voxels below the highest level any pool can have, wet or dry.
+    // Empty voxels below the highest level any pool can have, wet or dry. With one level for every
+    // cave, every dry voxel would stand above every wet one; a pool of its own lets a cave stay dry
+    // below the water of another.
     let (mut wet, mut dry) = (0, 0);
+    let (mut highest_wet, mut lowest_dry) = (f32::MIN, f32::MAX);
     for &chunk in &chunks {
         let rock = runtime.volume("rock", chunk).expect("an input");
         let fluid = runtime.volume("fluid", chunk).expect("generated");
@@ -81,8 +84,10 @@ fn caves_below_one_pools_level_are_dry_in_another_pool() {
             if rock.get(x, y, level) < 0.0 && z < 4.0 {
                 if fluid.get(x, y, level) > 0.0 {
                     wet += 1;
+                    highest_wet = highest_wet.max(z);
                 } else {
                     dry += 1;
+                    lowest_dry = lowest_dry.min(z);
                 }
             }
         }
@@ -90,6 +95,10 @@ fn caves_below_one_pools_level_are_dry_in_another_pool() {
     assert!(
         wet > 100 && dry > 100,
         "{wet} wet and {dry} dry cave voxels"
+    );
+    assert!(
+        lowest_dry < highest_wet,
+        "the lowest dry cave voxel at {lowest_dry} stands above every wet one, up to {highest_wet}"
     );
 }
 
