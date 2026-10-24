@@ -160,7 +160,7 @@ fn a_stage_that_needs_chunks_is_refused_by_name() {
 }
 
 #[test]
-fn a_world_map_of_256_by_256_tiles_is_quick_to_read() {
+fn a_world_map_of_256_by_256_tiles_covers_sea_and_land() {
     let pack = Arc::new(Pack::parse(TWO_LEVELS).expect("a valid pack"));
     let sampler = Runtime::new(pack, 5, SIZE);
 
