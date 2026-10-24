@@ -227,7 +227,54 @@ impl Default for NoiseConfig {
     }
 }
 
+/// The most octaves a noise or its domain warp sums. A sample loops over every one.
+pub const MAX_OCTAVES: i32 = 16;
+
 impl NoiseConfig {
+    /// Whether the configuration can be sampled: every number finite, and the noise's and its
+    /// warp's octaves from 1 to [`MAX_OCTAVES`].
+    ///
+    /// # Errors
+    /// What is out of range, as a sentence.
+    pub fn check(&self) -> Result<(), String> {
+        let numbers = [
+            ("frequency", self.frequency),
+            ("offset x", self.offset[0]),
+            ("offset y", self.offset[1]),
+            ("offset z", self.offset[2]),
+            ("fractal_lacunarity", self.fractal_lacunarity),
+            ("fractal_gain", self.fractal_gain),
+            ("fractal_weighted_strength", self.fractal_weighted_strength),
+            (
+                "fractal_ping_pong_strength",
+                self.fractal_ping_pong_strength,
+            ),
+            ("cellular_jitter", self.cellular_jitter),
+            ("domain_warp_amplitude", self.domain_warp_amplitude),
+            ("domain_warp_frequency", self.domain_warp_frequency),
+            (
+                "domain_warp_fractal_lacunarity",
+                self.domain_warp_fractal_lacunarity,
+            ),
+            ("domain_warp_fractal_gain", self.domain_warp_fractal_gain),
+        ];
+        if let Some((name, value)) = numbers.iter().find(|(_, value)| !value.is_finite()) {
+            return Err(format!("{name} {value} is not a finite number"));
+        }
+        for (name, octaves) in [
+            ("fractal_octaves", self.fractal_octaves),
+            (
+                "domain_warp_fractal_octaves",
+                self.domain_warp_fractal_octaves,
+            ),
+        ] {
+            if !(1..=MAX_OCTAVES).contains(&octaves) {
+                return Err(format!("{name} {octaves}; 1 to {MAX_OCTAVES} are allowed"));
+            }
+        }
+        Ok(())
+    }
+
     /// The noise at `(x, y)`, as Godot's `get_noise_2d` gives it: the offset added, the position
     /// warped if the warp is enabled, then the noise read there. Mostly within -1 to 1; weighted
     /// strengths, jitters and gains outside their usual ranges can leave it.

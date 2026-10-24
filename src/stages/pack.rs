@@ -1842,6 +1842,8 @@ pub enum PackError {
     DuplicateTable(String),
     #[error("table {table:?}: {message}")]
     InvalidTable { table: String, message: String },
+    #[error("the pack's noise {name:?}: {message}")]
+    Noise { name: String, message: String },
 }
 
 /// Where an expression is evaluated, which decides what its leaves may read.
@@ -2261,6 +2263,12 @@ impl Pack {
                     ),
                 });
             }
+        }
+        for (name, noise) in &file.noises {
+            noise.check().map_err(|message| PackError::Noise {
+                name: name.clone(),
+                message,
+            })?;
         }
         if let Some(water) = &file.water {
             if !water.level.is_finite() {

@@ -329,6 +329,30 @@ fn an_engine_replaces_a_named_noise_and_the_world_seed_leaves_it_alone() {
 }
 
 #[test]
+fn an_engine_noise_that_cannot_be_sampled_is_refused() {
+    let pack = Arc::new(Pack::parse(PACK).expect("a valid pack"));
+    let endless = NoiseConfig {
+        fractal_octaves: 2_000_000_000,
+        ..NoiseConfig::default()
+    };
+    let unbounded = NoiseConfig {
+        frequency: f32::INFINITY,
+        ..NoiseConfig::default()
+    };
+
+    let results = [endless, unbounded]
+        .map(|noise| Runtime::new(Arc::clone(&pack), 1, [8, 8]).with_noise("hills", noise));
+
+    for result in results {
+        assert!(
+            matches!(&result, Err(StageError::Noise { name, .. }) if name == "hills"),
+            "{:?}",
+            result.err()
+        );
+    }
+}
+
+#[test]
 fn a_noise_the_pack_does_not_name_is_refused_by_stage() {
     let field =
         Pack::parse(r#"(version: 1, stages: [(name: "height", kind: Field(FastNoise("hills")))])"#);

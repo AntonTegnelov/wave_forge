@@ -504,6 +504,8 @@ pub enum StageError {
     },
     #[error("the pack names no noise {0:?}")]
     UnknownNoise(String),
+    #[error("the noise {name:?}: {message}")]
+    Noise { name: String, message: String },
     #[error("an edit cannot be applied: {0}")]
     Edit(String),
     #[error("the pack gives the world no bound")]
@@ -1534,8 +1536,13 @@ impl Runtime {
     /// configuration say, for every expression that reads it.
     ///
     /// # Errors
-    /// [`StageError::UnknownNoise`] if the pack names no such noise.
+    /// [`StageError::UnknownNoise`] if the pack names no such noise, and [`StageError::Noise`] if
+    /// it cannot be sampled ([`NoiseConfig::check`]).
     pub fn with_noise(mut self, name: &str, noise: NoiseConfig) -> Result<Self, StageError> {
+        noise.check().map_err(|message| StageError::Noise {
+            name: name.to_owned(),
+            message,
+        })?;
         let known = self
             .noises
             .get_mut(name)
