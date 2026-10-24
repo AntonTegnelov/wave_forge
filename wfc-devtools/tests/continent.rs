@@ -463,6 +463,11 @@ fn a_settlement_of_every_culture_gets_a_town_of_its_module_set() {
             .expect("the town's site")
             .clone();
         assert_eq!(town.height, site.height, "{culture}");
+        assert_eq!(
+            &*town.rules,
+            culture.as_str(),
+            "the module set that solved it"
+        );
     }
     eprintln!(
         "continent: a town of each of {} cultures in {seconds:.1} s",
