@@ -2988,6 +2988,41 @@ impl Runtime {
             input.retry = retry;
             match job.run(&input)? {
                 Attempt::Accepted(curves) => {
+                    // The job is the game's code, so its curves are checked once here rather than
+                    // trusted by every stage that draws them.
+                    for curve in &curves {
+                        let finite = curve
+                            .points
+                            .iter()
+                            .flatten()
+                            .chain(&curve.values)
+                            .chain(&curve.heights)
+                            .all(|value| value.is_finite());
+                        let message = if curve.values.len() != curve.points.len() {
+                            format!(
+                                "it has {} values for {} points",
+                                curve.values.len(),
+                                curve.points.len()
+                            )
+                        } else if !curve.heights.is_empty()
+                            && curve.heights.len() != curve.points.len()
+                        {
+                            format!(
+                                "it has {} heights for {} points",
+                                curve.heights.len(),
+                                curve.points.len()
+                            )
+                        } else if !finite {
+                            "its points, values and heights are not all finite".to_owned()
+                        } else {
+                            continue;
+                        };
+                        return Err(StageError::Curve {
+                            stage: stage.name.clone(),
+                            curve: curve.id.clone(),
+                            message,
+                        });
+                    }
                     self.regions.insert(
                         (index, region),
                         ComputedRegion {

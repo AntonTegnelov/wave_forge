@@ -254,3 +254,48 @@ fn focusing_a_road_keeps_the_curves_and_the_ground_drawn_from_its_table() {
 
     assert!(dropped.is_empty(), "{dropped:?}");
 }
+
+/// A region job whose one curve has a value fewer than it has points.
+struct ShortRivers;
+
+impl RegionJob for ShortRivers {
+    fn run(&self, input: &RegionInput<'_>) -> Result<Attempt, StageError> {
+        Ok(Attempt::Accepted(vec![Curve {
+            id: CurveId::Region {
+                region: input.region(),
+                index: 0,
+            },
+            points: vec![[0.0, 4.0], [8.0, 4.0], [16.0, 4.0]],
+            values: vec![2.0, 1.0],
+            heights: Vec::new(),
+        }]))
+    }
+}
+
+#[test]
+fn a_region_jobs_curve_of_fewer_values_than_points_is_refused() {
+    const RIVERS: &str = r#"(
+        version: 1,
+        stages: [
+            (name: "ground", kind: Field(Constant(0.0))),
+            (name: "rivers", kind: Region(job: "rivers", region: 2)),
+            (name: "carved", kind: Apply(height: "ground", curves: "rivers", max_radius: 3, profile: Carve(1.5))),
+        ],
+    )"#;
+    let mut runtime = Runtime::new(
+        Arc::new(Pack::parse(RIVERS).expect("a valid pack")),
+        4,
+        SIZE,
+    )
+    .with_region_job("rivers", ShortRivers);
+    runtime
+        .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], &["carved"])
+        .expect("a stage");
+
+    let result = runtime.run_until_idle();
+
+    assert!(
+        matches!(&result, Err(StageError::Curve { stage, .. }) if stage == "rivers"),
+        "{result:?}"
+    );
+}
