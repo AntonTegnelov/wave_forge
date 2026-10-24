@@ -140,11 +140,20 @@ fn the_history_settles_every_culture_on_land_and_the_continent_takes_it() {
     // chunk of each other.
     let _ = runtime();
 
+    let sampler = Runtime::new(Arc::clone(&pack), SEED, SIZE);
+    let names = pack.kind("biome").expect("a biome stage").categories();
     let mut cultures: BTreeMap<String, usize> = BTreeMap::new();
     for row in &rows {
-        let Value::Name(culture) = &row.values["culture"] else {
-            panic!("a culture is a name");
+        let (Value::Name(culture), Value::Number(x), Value::Number(y)) =
+            (&row.values["culture"], &row.values["x"], &row.values["y"])
+        else {
+            panic!("a culture's name and a position");
         };
+        let biome = names[sampler.sample("biome", [*x, *y]).expect("a biome") as usize];
+        assert!(
+            !OCEANS.contains(&biome) && biome != "shallows",
+            "{culture}'s settlement at ({x}, {y}) is in {biome}"
+        );
         *cultures.entry(culture.clone()).or_default() += 1;
     }
     assert!(rows.len() >= 40, "{} settlements", rows.len());
