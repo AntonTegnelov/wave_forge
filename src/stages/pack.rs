@@ -58,6 +58,7 @@ pub struct AmbienceDef {
 
 /// Where an ambient sound plays.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub enum AmbienceKind {
     /// Along the curves of a Rivers, Region or TableCurves stage over the `height` field, spaced by
     /// the curves' radius, louder where a river runs wider and falls faster.
@@ -159,6 +160,7 @@ pub struct PackWater {
 
 /// The edge of a finite world, in WFC cells along the lattice's x and y.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub enum Bound {
     /// Within `radius` of `centre`.
     Disk { centre: (f32, f32), radius: f32 },
@@ -254,6 +256,7 @@ pub enum TableKind {
 /// [`crate::stages::AUTHORED`] plus its own number, which no generated row's id has, and it takes
 /// no part of its parent's budget.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthoredRow {
     /// The id of the row it belongs under; empty in a table without a parent.
     #[serde(default)]
@@ -324,6 +327,7 @@ const fn two() -> u32 {
 
 /// What a stage does.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub enum StageKind {
     /// A value per cell column, computed from an expression at that column alone.
     Field(Expr),
@@ -1339,6 +1343,52 @@ impl Reach {
         }
     }
 
+    /// Grows the reach to cover `other` too, where both are of one kind and the same region;
+    /// whether it did.
+    fn widen(&mut self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Cells(cells), Self::Cells(more)) | (Self::Chunks(cells), Self::Chunks(more)) => {
+                *cells = (*cells).max(more);
+                true
+            }
+            (
+                Self::Region { size, halo, cells },
+                Self::Region {
+                    size: other_size,
+                    halo: other_halo,
+                    cells: other_cells,
+                },
+            ) if *size == other_size => {
+                *halo = (*halo).max(other_halo);
+                *cells = (*cells).max(other_cells);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Why the reach is beyond what the runtime holds for a chunk, if it is.
+    fn beyond_limits(self) -> Option<String> {
+        match self {
+            Self::Cells(cells) if cells > MAX_REACH => Some(format!(
+                "{cells} cells beyond its chunk; at most {MAX_REACH} are allowed"
+            )),
+            Self::Chunks(chunks) if chunks > MAX_REGION => Some(format!(
+                "{chunks} chunks beyond its chunk; at most {MAX_REGION} are allowed"
+            )),
+            Self::Region { size, halo, cells }
+                if size > MAX_REGION || halo > MAX_REGION || cells > MAX_REACH =>
+            {
+                Some(format!(
+                    "over a region of {size} chunks grown by {halo} chunks and {cells} cells; \
+                     regions of at most {MAX_REGION} chunks, grown by at most {MAX_REGION} chunks \
+                     and {MAX_REACH} cells, are allowed"
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// The reach of a stage that reads the region of `size` chunks its chunk lies in.
     pub(crate) const fn region(size: u32) -> Self {
         Self::Region {
@@ -1354,6 +1404,7 @@ impl Reach {
 /// Coordinates are in cells, measured from the world's origin to the centre of the column, with
 /// the lattice's x and y.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub enum Expr {
     Constant(f32),
     /// Value noise in 0..1: `octaves` layers, the first with `frequency` lattice points per cell,
@@ -1446,8 +1497,30 @@ pub enum Expr {
 /// The widest band a `Match` blends over, in cells: a column reads `(2 * blend + 1)^2` categories.
 pub const MAX_BLEND: u32 = 32;
 
+/// The farthest a stage reads an input beyond its chunk, in cells: a Blur's radius, a Horizon's
+/// reach, a Scatter's spacing with its clearances. The runtime holds that window of the input for
+/// every chunk it generates.
+pub const MAX_REACH: u32 = 256;
+
+/// The most chunks along a side of a region a stage computes at once, a Lakes or a Cave stage's
+/// say: it computes a field of `(region * chunk)^2` columns.
+pub const MAX_REGION: u32 = 256;
+
+/// The most levels a Volume stage spans, each a layer of voxels in every chunk.
+pub const MAX_LEVELS: i64 = 4096;
+
+/// The most passes a Talus stage runs over its region and steps a droplet lives.
+pub const MAX_PASSES: u32 = 1024;
+
+/// The most droplets a Droplets stage starts per column of its region.
+pub const MAX_DROPLETS: f32 = 64.0;
+
+/// The most candidate points a Deposit stage tries.
+pub const MAX_DEPOSIT_TRIES: u32 = 16 * MAX_DEPOSITS;
+
 /// A comparison of two expressions at one column.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub enum Condition {
     Less(Box<Expr>, Box<Expr>),
     Greater(Box<Expr>, Box<Expr>),
@@ -2165,17 +2238,20 @@ fn link_tables(defs: Vec<TableDef>) -> Result<Linked, PackError> {
     // A table's depth is how many parents it has above it; a chain longer than the tables are
     // many has come back to itself.
     let mut depths = Vec::with_capacity(tables.len());
-    for (index, table) in tables.iter().enumerate() {
+    for table in &tables {
         let mut depth = 0;
+        let mut seen = vec![false; tables.len()];
         let mut at = table.parent;
         while let Some(parent) = at {
-            depth += 1;
-            if parent == index || depth > tables.len() {
+            // The walk repeats a table only inside a cycle, and that table is one of the cycle's.
+            if seen[parent] {
                 return Err(PackError::InvalidTable {
-                    table: table.name.clone(),
+                    table: tables[parent].name.clone(),
                     message: "its parents lead back to it".to_owned(),
                 });
             }
+            seen[parent] = true;
+            depth += 1;
             at = tables[parent].parent;
         }
         depths.push(depth);
@@ -2365,11 +2441,21 @@ impl Pack {
             if by_name.insert(stage.name.clone(), index).is_some() {
                 return Err(PackError::DuplicateName(stage.name.clone()));
             }
-            // A frozen stage of that name would share a store's layer with a world run's chunks.
-            if stage.name == super::world_run::RUN_LAYER {
+            // A stage's name is the directory a store keeps its chunks in (crate::frozen), so it has
+            // to name one on every file system, with no separator, no `..`, no two names that
+            // differ only in case, and none a world run's own layer takes ("world run").
+            let safe = stage.name.starts_with(|c: char| c.is_ascii_lowercase())
+                && stage
+                    .name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+            if !safe {
                 return Err(PackError::Invalid {
                     stage: stage.name.clone(),
-                    message: "the name is a world run's in a store".to_owned(),
+                    message: "a stage's name starts with a lowercase letter and holds only \
+                              lowercase ASCII letters, digits, `_` and `-`: it names the directory \
+                              a store keeps the stage's chunks in"
+                        .to_owned(),
                 });
             }
         }
@@ -2402,6 +2488,18 @@ impl Pack {
             })
             .collect();
         let mut stages = Vec::with_capacity(file.stages.len());
+        // The Locations stages, by name, with the names of the kinds of location they place.
+        let location_kinds: BTreeMap<String, Vec<String>> = file
+            .stages
+            .iter()
+            .filter_map(|def| match &def.kind {
+                StageKind::Locations { kinds, .. } => Some((
+                    def.name.clone(),
+                    kinds.iter().map(|kind| kind.name.clone()).collect(),
+                )),
+                _ => None,
+            })
+            .collect();
         // The sites stages, by name, with how many chunks a side their largest site spans.
         let site_extents: BTreeMap<String, u32> = file
             .stages
@@ -2492,6 +2590,12 @@ impl Pack {
                             if bottom >= top {
                                 return Err(invalid(format!(
                                     "its levels run from {bottom} up to {top}, so it has none"
+                                )));
+                            }
+                            if i64::from(*top) - i64::from(*bottom) > MAX_LEVELS {
+                                return Err(invalid(format!(
+                                    "its levels run from {bottom} up to {top}; at most \
+                                     {MAX_LEVELS} levels are allowed"
                                 )));
                             }
                             Place::Voxel
@@ -2657,6 +2761,12 @@ impl Pack {
                     {
                         return Err(invalid(format!("pixels of {cell} cells from {origin:?}")));
                     }
+                    let count = def.kind.categories().len();
+                    if count > MAX_CATEGORIES {
+                        return Err(invalid(format!(
+                            "{count} categories; at most {MAX_CATEGORIES} are allowed"
+                        )));
+                    }
                     if let Some((colour, _)) = legend
                         .iter()
                         .enumerate()
@@ -2680,7 +2790,7 @@ impl Pack {
                             size.0, size.1
                         )));
                     }
-                    if *region < size.1 + 2 {
+                    if *region < size.1.saturating_add(2) {
                         return Err(invalid(format!(
                             "a region of {region} chunks cannot keep a site of {} chunks one \
                              chunk inside it",
@@ -2733,15 +2843,17 @@ impl Pack {
                         return Err(invalid(format!("an {name} of {share}, beyond 0 to 1")));
                     }
                     if *region == 0
-                        || *lifetime == 0
+                        || !(1..=MAX_PASSES).contains(lifetime)
                         || *radius == 0
-                        || !(*droplets > 0.0 && droplets.is_finite())
+                        || *radius > MAX_REACH
+                        || !(*droplets > 0.0 && *droplets <= MAX_DROPLETS)
                         || !(*capacity > 0.0 && capacity.is_finite())
                     {
                         return Err(invalid(format!(
                             "a region of {region} chunks, {droplets} droplets a column living \
                              {lifetime} steps, wearing {radius} columns around with a capacity \
-                             of {capacity}"
+                             of {capacity}; up to {MAX_DROPLETS} droplets a column, {MAX_PASSES} \
+                             steps and a radius of {MAX_REACH} columns are allowed"
                         )));
                     }
                     // The droplets run over the whole region, from its heights alone.
@@ -2756,12 +2868,13 @@ impl Pack {
                     fade: _,
                 } => {
                     if *region == 0
-                        || *passes == 0
+                        || !(1..=MAX_PASSES).contains(passes)
                         || !(*slope >= 0.0 && slope.is_finite())
                         || !(0.0..=1.0).contains(rate)
                     {
                         return Err(invalid(format!(
-                            "a region of {region} chunks, {passes} passes shedding {rate} of the                              excess over a slope of {slope}"
+                            "a region of {region} chunks, {passes} passes shedding {rate} of the \
+                             excess over a slope of {slope}; 1 to {MAX_PASSES} passes are allowed"
                         )));
                     }
                     // The debris settles over the whole region, from its heights alone.
@@ -2792,6 +2905,13 @@ impl Pack {
                     region,
                     kinds,
                 } => {
+                    if *region == 0 || kinds.is_empty() {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks placing {} kinds of location; a region \
+                             from 1 chunk and at least one kind are needed",
+                            kinds.len()
+                        )));
+                    }
                     let mut reads = vec![(height.as_str(), Reach::region(*region), Output::Field)];
                     for (index, kind) in kinds.iter().enumerate() {
                         let refuse =
@@ -2821,7 +2941,7 @@ impl Pack {
                                 kind.quota, kind.size
                             )));
                         }
-                        if *region < kind.size + 2 {
+                        if *region < kind.size.saturating_add(2) {
                             return Err(refuse(format!(
                                 "a region of {region} chunks cannot keep a site of {} chunks one \
                                  chunk inside it",
@@ -2986,7 +3106,7 @@ impl Pack {
                     }
                     // A column is changed by any curve within its radius and blend, and reads the
                     // height at the nearest point of the curve's centre line.
-                    let reach = Reach::Cells(max_radius + blend);
+                    let reach = Reach::Cells(max_radius.saturating_add(*blend));
                     vec![
                         (height.as_str(), reach, Output::Field),
                         (curves.as_str(), reach, Output::Curves),
@@ -3120,7 +3240,7 @@ impl Pack {
                         }
                         // A voxel is carved by any tunnel within a cell of its radius, and reads
                         // the height at the nearest point of the tunnel's centre line.
-                        let reach = Reach::Cells(tunnels.max_radius + 1);
+                        let reach = Reach::Cells(tunnels.max_radius.saturating_add(1));
                         reads.push((tunnels.curves.as_str(), reach, Output::Curves));
                         match &tunnels.height {
                             Some(height) => reads.push((height.as_str(), reach, Output::Field)),
@@ -3151,11 +3271,17 @@ impl Pack {
                     apart,
                     rooms,
                     tries,
+                    rerolls,
                     ..
                 } => {
-                    if *region == 0 || *tries == 0 {
+                    if !(1..=MAX_REGION).contains(region)
+                        || !(1..=MAX_TRIES).contains(tries)
+                        || *rerolls > MAX_TRIES
+                    {
                         return Err(invalid(format!(
-                            "a region of {region} chunks and {tries} tries"
+                            "a region of {region} chunks, {tries} tries and {rerolls} rerolls; \
+                             a region of 1 to {MAX_REGION} chunks, 1 to {MAX_TRIES} tries and up \
+                             to {MAX_TRIES} rerolls are allowed"
                         )));
                     }
                     if !(depth.0.is_finite() && depth.1.is_finite() && depth.0 <= depth.1) {
@@ -3181,6 +3307,16 @@ impl Pack {
                         }
                         if room.weight == 0 {
                             return Err(invalid(format!("room {:?} of weight 0", room.name)));
+                        }
+                        if rooms[..=index]
+                            .iter()
+                            .try_fold(0_u32, |sum, room| sum.checked_add(room.weight))
+                            .is_none()
+                        {
+                            return Err(invalid(format!(
+                                "rooms whose weights add up beyond {}",
+                                u32::MAX
+                            )));
                         }
                         if rooms[..index]
                             .iter()
@@ -3230,11 +3366,16 @@ impl Pack {
                     let Some(&region) = caves.get(cave) else {
                         return Err(invalid(format!("its cave {cave:?} is no Cave stage")));
                     };
-                    if !(1..=MAX_DEPOSITS).contains(total) || *depth == 0 || *tries < *total {
+                    if !(1..=MAX_DEPOSITS).contains(total)
+                        || *depth == 0
+                        || *depth > MAX_REACH
+                        || *tries < *total
+                        || *tries > MAX_DEPOSIT_TRIES
+                    {
                         return Err(invalid(format!(
                             "a total of {total} in a shell {depth} cells deep from {tries} tries; \
-                             1 to {MAX_DEPOSITS} points, a depth from 1 and at least as many \
-                             tries as points are allowed"
+                             1 to {MAX_DEPOSITS} points, a depth of 1 to {MAX_REACH} cells and \
+                             from as many tries as points up to {MAX_DEPOSIT_TRIES} are allowed"
                         )));
                     }
                     if !(apart.is_finite() && *apart >= 0.0) {
@@ -3292,6 +3433,7 @@ impl Pack {
                 ],
                 StageKind::Assemble {
                     sites,
+                    kinds,
                     start,
                     pieces,
                     max,
@@ -3302,6 +3444,21 @@ impl Pack {
                     ..
                 } => {
                     check_pieces(pieces, start).map_err(invalid)?;
+                    // Only a Locations stage's sites have a kind, so a filter over any other site
+                    // stage, or naming a kind it does not place, would grow nothing anywhere.
+                    if !kinds.is_empty() {
+                        let Some(placed) = location_kinds.get(sites) else {
+                            return Err(invalid(format!(
+                                "it grows only kinds {kinds:?}, but {sites:?} is no Locations \
+                                 stage, whose sites have no kind"
+                            )));
+                        };
+                        if let Some(unknown) = kinds.iter().find(|kind| !placed.contains(kind)) {
+                            return Err(invalid(format!(
+                                "it grows the kind {unknown:?}, which {sites:?} does not place"
+                            )));
+                        }
+                    }
                     if !(1..=MAX_PIECES).contains(max) || min > max || *rerolls > MAX_PIECES {
                         return Err(invalid(format!(
                             "from {min} to {max} pieces over {rerolls} rerolls; up to \
@@ -3506,9 +3663,11 @@ impl Pack {
                     // spacing is judged against candidates `apart` further out, each by its own
                     // tests: the height one cell around it for the slope or the ground's normal,
                     // and what its conditions read around its column.
-                    let base = apart + group.map_or(0, |group| group.radius.ceil() as u32);
+                    let base =
+                        apart.saturating_add(group.map_or(0, |group| group.radius.ceil() as u32));
                     let around = u32::from(max_slope.is_some() || *align > 0.0);
-                    let mut fields = vec![(height.as_str(), Output::Field, base + around)];
+                    let mut fields =
+                        vec![(height.as_str(), Output::Field, base.saturating_add(around))];
                     if let (Some(_), Some(lakes)) = (water, lakes) {
                         fields.push((lakes, Output::Field, base));
                     }
@@ -3527,17 +3686,15 @@ impl Pack {
                     for condition in when {
                         let mut names = Vec::new();
                         condition.inputs(&mut names);
-                        fields.extend(
-                            names
-                                .into_iter()
-                                .map(|(name, output, reach)| (name, output, base + reach)),
-                        );
+                        fields.extend(names.into_iter().map(|(name, output, reach)| {
+                            (name, output, base.saturating_add(reach))
+                        }));
                     }
                     let mut reads = widest_reads(fields);
                     if let Some((sites, margin)) = avoid {
                         reads.push((
                             sites.as_str(),
-                            Reach::Cells(base + margin),
+                            Reach::Cells(base.saturating_add(*margin)),
                             footprints(&by_name, &outputs, sites),
                         ));
                     }
@@ -3547,12 +3704,13 @@ impl Pack {
                                 "a clearance of {clearance} cells from {points:?}"
                             )));
                         }
-                        let reach = Reach::Cells(base + clearance.ceil() as u32);
+                        let reach = Reach::Cells(base.saturating_add(clearance.ceil() as u32));
                         reads.push((points.as_str(), reach, Output::Points));
                     }
                     reads
                 }
             };
+            let reads = merged_reads(reads);
             let mut inputs = Vec::with_capacity(reads.len());
             for (name, reach, expected) in reads {
                 let index = *by_name.get(name).ok_or_else(|| PackError::UnknownInput {
@@ -3571,6 +3729,18 @@ impl Pack {
                         "it reads {name:?} as {expected:?}, but that stage produces {:?}",
                         outputs[index]
                     )));
+                }
+                // A curve's points lie in the columns of the stage that made it, and nothing scales
+                // them to a reader's.
+                if expected == Output::Curves && scales[index] != def.scale {
+                    return Err(invalid(format!(
+                        "it reads the curves of {name:?}, of scale {}, from scale {}; a stage reads \
+                         only curves of its own scale",
+                        scales[index], def.scale
+                    )));
+                }
+                if let Some(problem) = reach.beyond_limits() {
+                    return Err(invalid(format!("it reads {name:?} {problem}")));
                 }
                 inputs.push((index, reach));
             }
@@ -3889,6 +4059,22 @@ pub(crate) const fn point_stage_id(salt: u32) -> u16 {
 /// Each stage an expression reads, once for each kind it reads it as, at the widest reach any part
 /// of it reads that stage at: the runtime gives a stage one view of each input. A stage read as two
 /// kinds stays two reads, so the check of what each stage produces refuses the wrong one.
+/// `reads` with every read of one stage as one output merged into the widest of them, where they are
+/// of the same kind: the runtime keeps one view of an input per stage.
+fn merged_reads(reads: Vec<(&str, Reach, Output)>) -> Vec<(&str, Reach, Output)> {
+    let mut merged: Vec<(&str, Reach, Output)> = Vec::new();
+    for (name, reach, output) in reads {
+        let known = merged
+            .iter_mut()
+            .find(|(known, _, kind)| *known == name && *kind == output)
+            .and_then(|(_, known, _)| known.widen(reach).then_some(()));
+        if known.is_none() {
+            merged.push((name, reach, output));
+        }
+    }
+    merged
+}
+
 fn widest_reads(reads: Vec<(&str, Output, u32)>) -> Vec<(&str, Reach, Output)> {
     let mut widest: Vec<(&str, Reach, Output)> = Vec::new();
     for (name, output, reach) in reads {
@@ -4157,6 +4343,42 @@ mod tests {
         let mut stages = stages;
         stages.sort();
         assert_eq!(stages, vec!["a".to_owned(), "b".to_owned()]);
+    }
+
+    #[test]
+    fn two_reads_of_one_stage_are_kept_as_the_widest() {
+        let pack = pack_with(
+            r#"(name: "ground", kind: Field(Constant(0.0))),
+               (name: "rocks", kind: Scatter(kind: "rock", height: "ground", spacing: 4, apart: 2)),
+               (name: "trees", kind: Scatter(kind: "tree", height: "ground", spacing: 4, apart: 2,
+                   block: [("rocks", 1.0), ("rocks", 6.0)]))"#,
+        )
+        .expect("a valid pack");
+
+        let trees = &pack.stages[pack.index("trees").expect("a stage")];
+        let rocks = pack.index("rocks").expect("a stage");
+        let reads: Vec<Reach> = trees
+            .inputs
+            .iter()
+            .filter(|(input, _)| *input == rocks)
+            .map(|&(_, reach)| reach)
+            .collect();
+
+        assert_eq!(reads, vec![Reach::Cells(2 + 6)]);
+    }
+
+    #[test]
+    fn reach_is_measured_along_each_axis_of_a_chunk() {
+        let pack = pack_with(
+            r#"(name: "towns", kind: Sites(height: "h", region: 3, size: (1, 1), chance: 1.0)),
+               (name: "h", kind: Field(Constant(0.0)))"#,
+        )
+        .expect("a valid pack");
+
+        let reach = pack.reach("towns", [16, 8]).expect("a stage");
+
+        // A site lies in its chunk's region of three chunks, at most two chunks from the chunk.
+        assert_eq!(reach["h"], [2 * 16, 2 * 8]);
     }
 
     #[test]

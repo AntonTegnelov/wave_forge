@@ -42,17 +42,31 @@ refuses, each time with a `PackError` that names the stage:
 
 | Error | When |
 |---|---|
-| `Syntax` | the text is not a pack (RON errors, unknown fields) |
+| `Syntax` | the text is not a pack (RON errors, unknown fields at any depth: a misspelt field of a stage kind, an expression or an authored row is refused, never left at its default) |
 | `Version` | the version is not `PACK_VERSION` (1); there are no migrations yet |
 | `DuplicateName` | two stages share a name |
 | `UnknownInput` | a stage reads a name no stage has |
-| `Invalid` | a parameter is out of range, or a stage reads an input of the wrong type (a field where it needs sites, say) |
+| `Invalid` | a parameter is out of range or past its limit (below), a stage reads an input of the wrong type (a field where it needs sites, say) or curves of another scale, or a stage's name is not a lowercase ASCII letter followed by lowercase letters, digits, `_` and `-` (the name is the directory a store keeps the stage's chunks in, so it must name one on every file system) |
 | `Cycle` | stages read each other in a cycle |
 | `DuplicateTable` | two tables share a name |
-| `InvalidTable` | a table's parameter or expression is wrong, or its parents lead back to it |
+| `InvalidTable` | a table's parameter or expression is wrong, or its parents lead back to it (the table named is one of the cycle's) |
+| `Noise` | one of the pack's `noises` cannot be sampled: a number that is not finite, or octaves outside 1 to `MAX_OCTAVES` (16) |
+
+A pack that loads is one the runtime can generate, so sizes and loops have limits, each well above
+what any shipped pack uses:
+
+| Limit | Value | What it bounds |
+|---|---|---|
+| `MAX_REACH` | 256 cells | how far beyond its chunk a stage reads an input: a Blur's radius, a Horizon's reach, an Apply's radius and blend, a Scatter's spacing with its clearances |
+| `MAX_REGION` | 256 chunks | a region's side, for every region stage, and how far a region's read grows |
+| `MAX_LEVELS` | 4096 | a Volume's levels from `bottom` to `top` |
+| `MAX_PASSES` | 1024 | a Talus stage's passes and a droplet's lifetime |
+| `MAX_DROPLETS` | 64 | a Droplets stage's droplets per column |
+| `MAX_TRIES` | 1024 | a Cave's tries and rerolls, beside Assemble's and Locations' |
+| `MAX_DEPOSIT_TRIES` | 65 536 | a Deposit stage's tries |
 
 `Pack::reach(target, chunk_size)` reports, for every stage `target` depends on, how many WFC cells
-beyond a column of `target` it has to be generated: the largest sum of reaches along any path, each
+beyond a column of `target` it has to be generated along the lattice's x and along its y: the largest sum of reaches along any path, each
 in its reader's columns times the reader's scale, plus one column of an input read between its
 columns. `Pack::scale(stage)` gives a stage's scale.
 `Pack::stage_names` and `Pack::kind` describe the stages to a tool or an engine.
