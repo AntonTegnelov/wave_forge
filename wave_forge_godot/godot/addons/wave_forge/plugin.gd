@@ -47,9 +47,6 @@ const SHORTCUTS := {
 	"wave_forge/brush_fill": ["Fill brush", KEY_5],
 	"wave_forge/brush_remove": ["Remove brush", KEY_6],
 }
-## How far along a ray the plugin looks for the ground, in world units, and in what steps.
-const RAY_LENGTH := 2000.0
-const RAY_STEP := 0.5
 
 var dock: EditorDock
 var preset_choice: OptionButton
@@ -139,7 +136,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			stroking = true
 			path = PackedVector3Array()
 			before = stages.edits_log()
-			_add_point(camera, event.position)
+			_add_point(_ground_under(camera, event.position))
 		elif stroking:
 			# A release whose press painting did not see, painting turned on while held, has no
 			# stroke to finish.
@@ -148,29 +145,21 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			path = PackedVector3Array()
 		return AFTER_GUI_INPUT_STOP
 	if event is InputEventMouseMotion:
-		cursor.show_at(_ground_under(camera, event.position), radius_spin.value, stages.cell_size)
+		var ground = _ground_under(camera, event.position)
+		cursor.show_at(ground, radius_spin.value, stages.cell_size)
 		if stroking:
-			_add_point(camera, event.position)
+			_add_point(ground)
 			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
 
-## Adds the ground under the mouse to the stroke's path, if the ray from the camera meets it.
-func _add_point(camera: Camera3D, screen: Vector2) -> void:
-	var ground = _ground_under(camera, screen)
+## Adds `ground`, where the mouse's ray meets the ground, to the stroke's path, if it meets it.
+func _add_point(ground: Variant) -> void:
 	if ground != null:
 		path.append(ground)
 
 ## Where the ray from the camera through `screen` first meets the ground, or null if it does not.
 func _ground_under(camera: Camera3D, screen: Vector2) -> Variant:
-	var from := camera.project_ray_origin(screen)
-	var along := camera.project_ray_normal(screen)
-	var travelled := 0.0
-	while travelled < RAY_LENGTH:
-		var at := from + along * travelled
-		if at.y <= stages.ground_height(at):
-			return at
-		travelled += RAY_STEP
-	return null
+	return stages.ground_under(camera.project_ray_origin(screen), camera.project_ray_normal(screen))
 
 ## Paints the stroke and records it as one undo action.
 func _finish_stroke() -> void:
