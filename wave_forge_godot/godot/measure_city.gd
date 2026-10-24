@@ -62,6 +62,8 @@ func _initialize() -> void:
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	world.cell_size = Vector3(CELL_SIZE, CELL_SIZE, CELL_SIZE)
 	world.view_radius = RADIUS
+	# A chunk more than one chunk beyond the view is dropped and freed, as in a game and the Bevy run.
+	world.evict_margin = 1
 	world.collider_radius = -1
 	if not world.load_rules(FileAccess.get_file_as_string("res://city.ron")):
 		_fail("res://city.ron could not be loaded")
