@@ -42,6 +42,8 @@ fn cpu_reference_city() {
         let (store, region) = one_chunk_world(width, height, depth);
         let init = region_init(&store, &city_prior(&city, depth), &ruleset, &region, false);
         let cells = width * height * depth;
+        // Some seeds thrash (K28), so not every seed solves, but some must, or nothing is timed.
+        let mut solved = 0;
         for seed in 1..=8 {
             let started = Instant::now();
             let (domains, status, stats) = solver.solve_region(region.shape(), &init, 1, seed);
@@ -70,6 +72,8 @@ fn cpu_reference_city() {
                 stats.backtracks,
                 f64::from(cells) / seconds
             );
+            solved += 1;
         }
+        assert!(solved > 0, "no seed solved {width}x{height}x{depth}");
     }
 }
