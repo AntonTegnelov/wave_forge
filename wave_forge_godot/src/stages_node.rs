@@ -3243,6 +3243,12 @@ impl WaveForgeStages {
         }
     }
 
+    /// Whether a world run is under way, from `run_world` until `world_run_finished`.
+    #[func]
+    fn is_world_running(&self) -> bool {
+        self.world_run.is_some()
+    }
+
     /// Stops the world run under way after the chunk it is on; `run_world` again resumes it.
     #[func]
     fn cancel_world_run(&mut self) {
