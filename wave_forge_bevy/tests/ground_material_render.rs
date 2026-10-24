@@ -238,7 +238,9 @@ fn render_halves_textured(
         .add(material);
     let mesh = world.resource_mut::<Assets<Mesh>>().add(ground_mesh(&mesh));
     world.spawn((Mesh3d(mesh), MeshMaterial3d(material)));
-    // The mesh spans the columns' centres, 0.5 to 8.5 cells; the camera looks straight down on it.
+    // The mesh spans the columns' centres, 0.5 to 8.5 cells; the camera looks straight down on it
+    // from above the steepest ground any test draws, 25.5 units high at the east edge, since an
+    // orthographic camera clips what stands above it.
     world.spawn((
         Camera3d::default(),
         RenderTarget::Image(ImageRenderTarget::from(target.clone())),
@@ -251,7 +253,7 @@ fn render_halves_textured(
         }),
         Tonemapping::None,
         Msaa::Off,
-        Transform::from_xyz(4.5, 20.0, 4.5).looking_at(Vec3::new(4.5, 0.0, 4.5), Vec3::NEG_Z),
+        Transform::from_xyz(4.5, 27.0, 4.5).looking_at(Vec3::new(4.5, 0.0, 4.5), Vec3::NEG_Z),
     ));
     world.spawn(Readback::texture(target)).observe(
         |readback: On<ReadbackComplete>, mut pixels: ResMut<Pixels>| {
@@ -261,8 +263,19 @@ fn render_halves_textured(
 
     let started = Instant::now();
     let mut frames = 0;
-    // Pipelines compile over the first frames; keep reading until the picture has settled.
-    while frames < 60 || app.world().resource::<Pixels>().0.is_none() {
+    // Pipelines compile over the first frames, which draw the clear colour; keep reading until the
+    // middle of the picture shows the ground.
+    let drawn = |app: &App| {
+        app.world()
+            .resource::<Pixels>()
+            .0
+            .as_ref()
+            .is_some_and(|pixels| {
+                !near(pixel_of(pixels, SIZE / 2, SIZE / 2), CLEAR)
+                    && !near(pixel_of(pixels, 4, SIZE / 2), CLEAR)
+            })
+    };
+    while frames < 60 || !drawn(&app) {
         app.update();
         frames += 1;
         assert!(started.elapsed() < Duration::from_secs(60), "no picture");
@@ -297,15 +310,15 @@ fn with_the_flat_look_a_chunks_materials_come_out_in_their_palette_colours() {
         (near(left, WEST) && near(right, EAST)) || (near(left, EAST) && near(right, WEST)),
         "left {left:?}, right {right:?}"
     );
-    // The border lies at x = 4 cells, 3.5 cells into the 8 the camera sees: only a band a cell
-    // wide around it blends.
+    // The last west vertex stands 3 cells into the 8 the camera sees and the first east one 4,
+    // pixels 24 and 32 of 64: only the cell between blends, with a pixel's slack either side.
     for y in (0..SIZE).step_by(8) {
         for x in 0..SIZE {
             let from_west = if west < east { x } else { SIZE - 1 - x };
             let colour = pixel(x, y);
-            if from_west < SIZE * 3 / 8 - SIZE / 16 {
+            if from_west < SIZE * 3 / 8 - 1 {
                 assert!(near(colour, WEST), "({x}, {y}): {colour:?}");
-            } else if from_west > SIZE * 3 / 8 + SIZE / 8 + SIZE / 16 {
+            } else if from_west > SIZE / 2 + 1 {
                 assert!(near(colour, EAST), "({x}, {y}): {colour:?}");
             }
         }
@@ -740,10 +753,17 @@ fn steep_ground_turns_a_colour_to_rock_but_not_a_texture_set() {
         "the textured half is {textured:?}"
     );
     assert!(
+        !near(coloured, CLEAR),
+        "the coloured half was not drawn: {coloured:?}"
+    );
+    assert!(
         !near(coloured, EAST),
         "the coloured half did not turn to rock"
     );
 }
+
+/// Bevy's default clear colour, which a pixel nothing was drawn on holds.
+const CLEAR: [u8; 3] = [43, 44, 47];
 
 /// A set's colour for the ramp's tint: low in green, which the ramp multiplies most.
 const DARK_GREEN_SET: [u8; 3] = [120, 12, 20];
