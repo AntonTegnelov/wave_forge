@@ -84,13 +84,13 @@ fn a_pack_reports_how_far_each_stage_is_generated_beyond_the_target() {
 
     let reach = pack.reach("shore", SIZE).expect("a stage");
 
-    assert_eq!(reach["shore"], 0);
-    assert_eq!(reach["level"], 2);
-    assert_eq!(reach["towns"], 2 + 6);
+    assert_eq!(reach["shore"], [0; 2]);
+    assert_eq!(reach["level"], [2; 2]);
+    assert_eq!(reach["towns"], [2 + 6; 2]);
     // The towns read the height over their chunk's region of 5 chunks of 8, whose far side lies
     // at most 4 chunks beyond the chunk.
-    assert_eq!(reach["height"], 2 + 6 + 32);
-    assert_eq!(reach["rough"], 2 + 6 + 32 + 5);
+    assert_eq!(reach["height"], [2 + 6 + 32; 2]);
+    assert_eq!(reach["rough"], [2 + 6 + 32 + 5; 2]);
 }
 
 /// The sites of a 30×30-chunk area.

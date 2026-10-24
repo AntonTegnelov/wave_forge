@@ -206,6 +206,27 @@ fn a_remove_stroke_takes_every_point_near_its_path_and_none_further() {
 }
 
 #[test]
+fn a_stroke_that_would_never_end_is_refused() {
+    let runtime = runtime(&[]);
+    let raise = |radius: f32| Brush::Raise {
+        stage: "flat".to_owned(),
+        radius,
+        strength: 1.0,
+    };
+
+    let results = [
+        stroke(&runtime, &raise(2.0), &[[f32::NAN, 0.0, 0.0]]),
+        stroke(&runtime, &raise(2.0), &[[1e30, 0.0, 0.0]]),
+        stroke(&runtime, &raise(2.0), &[[0.0, 0.0, 0.0], [1e7, 0.0, 0.0]]),
+        stroke(&runtime, &raise(1e9), &PATH),
+    ];
+
+    for result in results {
+        assert!(matches!(result, Err(StageError::Edit(_))), "{result:?}");
+    }
+}
+
+#[test]
 fn a_brush_of_the_wrong_kind_or_size_is_refused() {
     let runtime = runtime(&[]);
     let raise = |stage: &str, radius: f32| Brush::Raise {

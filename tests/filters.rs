@@ -109,8 +109,8 @@ fn a_filter_reaches_as_far_as_its_radius_and_samples_as_its_chunks_hold() {
     let reach_delta = pack.reach("delta", SIZE).expect("a stage");
     let reach_area = pack.reach("area", SIZE).expect("a stage");
 
-    assert_eq!(reach_delta["ground"], 3);
-    assert_eq!(reach_area["side"], 2);
+    assert_eq!(reach_delta["ground"], [3; 2]);
+    assert_eq!(reach_area["side"], [2; 2]);
     for (x, y) in [(5, 7), (19, 30), (40, 2)] {
         let at = [x as f32 + 0.5, y as f32 + 0.5];
         assert_eq!(sampler.sample("delta", at), Ok(delta[&(x, y)]));

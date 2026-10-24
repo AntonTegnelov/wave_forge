@@ -520,11 +520,13 @@ fn play(
                     continue;
                 };
                 let scale = pack.scale(stage).expect("a stage the pack names");
-                let beyond = cells.div_ceil(size[0] * scale) as i32;
+                // The reach in chunks of the WFC lattice, as the focus points' radii are.
+                let beyond = [0, 1].map(|axis| cells[axis].div_ceil(size[axis]) as i32);
                 for point in &focus {
-                    let radius = radius.unwrap_or(point.radius) as i32 + beyond;
-                    for y in -radius..=radius {
-                        for x in -radius..=radius {
+                    let radius = radius.unwrap_or(point.radius) as i32;
+                    let [across, along] = beyond.map(|beyond| radius + beyond);
+                    for y in -along..=along {
+                        for x in -across..=across {
                             let chunk = ChunkCoord::new(
                                 (point.chunk.x + x).div_euclid(scale as i32),
                                 (point.chunk.y + y).div_euclid(scale as i32),

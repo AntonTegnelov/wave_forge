@@ -51,6 +51,7 @@ struct ModuleFile {
 
 /// One named face.
 #[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 enum FaceDef {
     /// A face along `±x` or `±y`.
     Side {
@@ -378,6 +379,21 @@ mod tests {
              rotatable: false, exclude: [("+x", "road")]),
         ],
     )"#;
+
+    #[test]
+    fn a_misspelt_field_of_a_face_is_refused() {
+        let misspelt = ROADS.replace(
+            "enforce_walkable_neighbor: true",
+            "enforce_walkable_neighbour: true",
+        );
+
+        let result = parse_module_set(&misspelt);
+
+        assert!(
+            matches!(&result, Err(LoadError::ParseError(message)) if message.contains("enforce_walkable_neighbour")),
+            "{result:?}"
+        );
+    }
 
     #[test]
     fn a_module_file_compiles_to_rotated_variants() {

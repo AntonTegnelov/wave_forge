@@ -109,8 +109,8 @@ fn the_reach_is_the_slope_fit() {
         .reach("eroded", SIZE)
         .expect("a stage");
 
-    assert_eq!(narrow.get("height"), Some(&2));
-    assert_eq!(wide.get("height"), Some(&9));
+    assert_eq!(narrow.get("height"), Some(&[2; 2]));
+    assert_eq!(wide.get("height"), Some(&[9; 2]));
 }
 
 #[test]
