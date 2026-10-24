@@ -1781,6 +1781,10 @@ impl WaveForgeWorld {
                     let region = server.region_create();
                     server.region_set_map(region, map);
                     server.region_set_enabled(region, true);
+                    // As the stages node's regions: a region given new meshes while an asynchronous
+                    // iteration was under way stopped the map synchronising in Godot 4.7.2
+                    // (stage_navigation.rs), and a repair gives a region new meshes.
+                    server.region_set_use_async_iterations(region, false);
                     region
                 }
             };
