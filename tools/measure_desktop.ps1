@@ -108,10 +108,18 @@ function Say([string]$Message) {
 function Invoke-Logged([string]$Name, [string]$Program, [string[]]$Arguments) {
     $log = Join-Path $Logs "$Name.log"
     Say "$Name"
+    # A program that is not there, a build that never made it, would leave the last command's exit
+    # code standing, and the run would pass with no data.
+    if (-not (Get-Command $Program -ErrorAction SilentlyContinue)) {
+        $Failures.Add("$Name ($Program not found)")
+        Say "$Name failed: $Program not found"
+        return 1
+    }
     $previous = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $global:LASTEXITCODE = $null
     & $Program @Arguments 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log | Out-Null
-    $code = $LASTEXITCODE
+    $code = if ($null -eq $LASTEXITCODE) { 1 } else { $LASTEXITCODE }
     $ErrorActionPreference = $previous
     if ($code -ne 0) {
         $Failures.Add("$Name (exit $code, see logs/$Name.log)")
