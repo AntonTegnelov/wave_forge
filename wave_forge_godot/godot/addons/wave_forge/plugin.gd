@@ -128,6 +128,8 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if stages == null or not is_instance_valid(stages):
 		return AFTER_GUI_INPUT_PASS
 	if not painting_toggle.button_pressed:
+		# Painting turned off mid-stroke ends the stroke, which a later press starts afresh.
+		stroking = false
 		cursor.visible = false
 		if event is InputEventMouseMotion and not String(stages.candidates_stage).is_empty():
 			candidate.show_candidate(stages.candidate_under(camera.project_ray_origin(event.position), camera.project_ray_normal(event.position)))
@@ -138,9 +140,12 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			path = PackedVector3Array()
 			before = stages.edits_log()
 			_add_point(camera, event.position)
-		else:
+		elif stroking:
+			# A release whose press painting did not see, painting turned on while held, has no
+			# stroke to finish.
 			stroking = false
 			_finish_stroke()
+			path = PackedVector3Array()
 		return AFTER_GUI_INPUT_STOP
 	if event is InputEventMouseMotion:
 		cursor.show_at(_ground_under(camera, event.position), radius_spin.value, stages.cell_size)
