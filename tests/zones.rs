@@ -273,8 +273,12 @@ fn the_world_is_the_same_whatever_order_its_chunks_come_in() {
             .expect("the stages");
         backwards.run_until_idle().expect("the world generates");
         assert_eq!(
-            backwards.chunk_hash(*chunk, &STAGES),
-            whole.chunk_hash(*chunk, &STAGES),
+            backwards
+                .chunk_hash(*chunk, &STAGES)
+                .expect("every stage there"),
+            whole
+                .chunk_hash(*chunk, &STAGES)
+                .expect("every stage there"),
             "{chunk:?}"
         );
     }
