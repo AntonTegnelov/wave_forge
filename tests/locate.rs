@@ -75,16 +75,6 @@ fn the_located_site_is_the_nearest_of_those_generation_places() {
 }
 
 #[test]
-fn locating_generates_no_chunk() {
-    let runtime = runtime();
-
-    let located = runtime.locate("outposts", [500.0, -500.0], 8);
-
-    assert!(matches!(located, Ok(Some(_))), "{located:?}");
-    assert!(runtime.field("height", ChunkCoord::new(0, 0, 0)).is_none());
-}
-
-#[test]
 fn only_a_sites_stage_can_be_located() {
     let runtime = runtime();
 

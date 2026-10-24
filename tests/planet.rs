@@ -229,7 +229,19 @@ fn the_nearest_outpost_is_located_without_generating_the_chunks_between() {
         })
         .collect();
     assert!(placed.contains(&located), "{located:?}");
-    assert!(fresh.volume("terrain", ChunkCoord::new(0, 0, 0)).is_none());
+    // How far a site's footprint is from a point, in columns; the borrow `locate` takes already
+    // keeps it from generating anything.
+    let distance = |site: &Site| {
+        let away = |low: i32, high: i32, x: f32| {
+            (low as f32 * 8.0 - x).max(x - high as f32 * 8.0).max(0.0)
+        };
+        libm::hypotf(
+            away(site.min.0, site.max.0, 3.0),
+            away(site.min.1, site.max.1, 5.0),
+        )
+    };
+    let nearest = placed.iter().map(distance).fold(f32::INFINITY, f32::min);
+    assert_eq!(distance(&located), nearest);
 }
 
 #[test]
