@@ -7,9 +7,9 @@
 //! - Each emitter becomes an entity with a `SpatialAudioEmitter`, playing a looped sound for its
 //!   key, and goes when its chunk is evicted or generated again.
 //! - A sound on the other side of a wall from the listener is muffled: it is heard over a quarter
-//!   of its radius. `bevy_kira_audio` has neither effects nor buses to reverb or route a room's
-//!   sounds through (a channel's volume is written onto each sound, which spatial audio overwrites
-//!   every frame), so the room reaches the mix through each emitter's `SpatialRadius`.
+//!   of its radius. A room's sounds are not routed through a reverb track of their own yet
+//!   (#195), though `bevy_kira_audio` 0.27.1 can play a channel through an `AudioTrack`'s effects,
+//!   so the room reaches the mix through each emitter's `SpatialRadius`.
 //! - A location's name is formatted by a Fluent bundle from its key and arguments.
 //!
 //! ```text
