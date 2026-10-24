@@ -192,7 +192,7 @@ fn the_world_map_is_one_region_with_its_rivers_biomes_regions_and_rejections() {
         .flat_map(|chunk| {
             runtime
                 .curves("rivers", chunk)
-                .unwrap_or(&[])
+                .expect("every chunk of the bound generated")
                 .iter()
                 .map(|c| c.id.clone())
         })
@@ -295,7 +295,7 @@ fn the_history_stands_as_towns_ruins_and_roads() {
         .flat_map(|chunk| {
             runtime
                 .curves("roads", chunk)
-                .unwrap_or(&[])
+                .expect("every chunk of the bound generated")
                 .iter()
                 .map(|c| c.id.clone())
         })
