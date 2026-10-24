@@ -64,10 +64,10 @@ func _process(_delta: float) -> bool:
 			if ready.has(["trees", ORIGIN]) and ready.has(["ground", ORIGIN]) and ready.has(["grass", ORIGIN]):
 				_edit()
 		"edited":
-			if ready.has(["trees", ORIGIN]) and ready.has(["ground", ORIGIN]):
+			if ready.has(["trees", ORIGIN]) and ready.has(["ground", ORIGIN]) and ready.has(["grass", ORIGIN]):
 				return _check_edited()
 		"restored":
-			if restored.has(["trees", ORIGIN]) and restored.has(["ground", ORIGIN]):
+			if restored.has(["trees", ORIGIN]) and restored.has(["ground", ORIGIN]) and restored.has(["grass", ORIGIN]):
 				return _check_restored()
 		"saving":
 			if save_text != "":
@@ -86,7 +86,7 @@ func _edit() -> void:
 		return
 	ready.clear()
 	if not first.remove_point("trees", ORIGIN, felled) or not first.remove_point("grass", ORIGIN, cut) or not first.raise("ground", Vector3(5.5, 0, 5.5), 7.0):
-		_fail("the tree or the raise was refused")
+		_fail("the tree, the grass or the raise was refused")
 		return
 	phase = "edited"
 
@@ -94,10 +94,13 @@ func _check_edited() -> bool:
 	if not dropped.has(["trees", ORIGIN]) or felled in _ids(first):
 		_fail("the felled tree %d is still there" % felled)
 		return true
+	if not dropped.has(["grass", ORIGIN]) or cut in _ids(first, "grass"):
+		_fail("the cut grass %d is still there" % cut)
+		return true
 	if first.field_values("ground", ORIGIN)[5 * CELLS + 5] != height + 7.0:
 		_fail("the ground at (5, 5) is %s; it was %s before a raise of 7" % [first.field_values("ground", ORIGIN)[5 * CELLS + 5], height])
 		return true
-	print("verify_edits: the felled tree is gone and the ground raised by 7")
+	print("verify_edits: the felled tree and the cut grass are gone and the ground raised by 7")
 	second = _world()
 	second.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: restored[[stage, chunk]] = true)
 	if not second.start() or not second.set_edits_log(first.edits_log()):
@@ -109,14 +112,14 @@ func _check_edited() -> bool:
 	return false
 
 func _check_restored() -> bool:
-	if _ids(second) != _ids(first) or second.field_values("ground", ORIGIN) != first.field_values("ground", ORIGIN):
+	if _ids(second) != _ids(first) or _ids(second, "grass") != _ids(first, "grass") or second.field_values("ground", ORIGIN) != first.field_values("ground", ORIGIN):
 		_fail("the edits restored from the log give another world")
 		return true
 	var hash: String = first.chunk_hash(ORIGIN)
 	if hash.length() != 16 or second.chunk_hash(ORIGIN) != hash or second.product_hash("ground", ORIGIN) != first.product_hash("ground", ORIGIN):
 		_fail("the node restored from the log hashes its chunk otherwise: %s against %s" % [second.chunk_hash(ORIGIN), hash])
 		return true
-	print("verify_edits: a node given only the edits log holds the same trees and ground, and hashes its chunk alike (%s)" % hash)
+	print("verify_edits: a node given only the edits log holds the same trees, grass and ground, and hashes its chunk alike (%s)" % hash)
 	first.saved.connect(func(text: String) -> void: save_text = text)
 	first.request_save()
 	phase = "saving"
