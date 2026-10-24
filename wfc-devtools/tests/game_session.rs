@@ -415,7 +415,17 @@ fn play() -> Result<Session, String> {
             return Err(reason.to_owned());
         }
         max_resident = max_resident.max(tracker.resident.len());
-        for chunk in in_view(position) {
+        let view = in_view(position);
+        // A chunk passed before it arrived was late until it left the view, not until it is seen
+        // again, perhaps minutes later.
+        missing_since.retain(|chunk, since| {
+            let still = view.contains(chunk);
+            if !still {
+                worst_late_s = worst_late_s.max(t - *since);
+            }
+            still
+        });
+        for chunk in view {
             if tracker.resident.contains_key(&chunk) {
                 if let Some(since) = missing_since.remove(&chunk) {
                     worst_late_s = worst_late_s.max(t - since);
