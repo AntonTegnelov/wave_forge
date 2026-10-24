@@ -257,6 +257,9 @@ pub struct WaveForgeWorld {
     rules: Option<RuleFile>,
     /// The generating thread, once [`WaveForgeWorld::start`] has built it.
     worker: Option<ending::Ending<Worker>>,
+    /// The rule set the generating thread was started with, which everything built from its tiles
+    /// reads: one [`WaveForgeWorld::load_rules`] reads later waits for the next start.
+    worker_rules: Option<RuleFile>,
     /// The chunk the last [`WaveForgeWorld::follow`] landed in, so an unmoved player asks nothing.
     followed: Option<ChunkCoord>,
     /// The collision shape of each module that has one, by module name.
@@ -362,6 +365,7 @@ impl INode for WaveForgeWorld {
             face_bans: Default::default(),
             rules: None,
             worker: None,
+            worker_rules: None,
             followed: None,
             collider_radius: 1,
             collision_shapes: HashMap::new(),
@@ -796,6 +800,7 @@ impl WaveForgeWorld {
         let cache = (!self.kernel_cache.is_empty())
             .then(|| std::path::PathBuf::from(crate::paths::directory_path(&self.kernel_cache)));
         self.followed = None;
+        self.worker_rules = Some(file.clone());
         // Everything here happens on the generating thread, including building the device and
         // compiling the kernels, so Godot's own thread never waits for either.
         self.worker = Some(ending::Ending::new(Worker::spawn(move || {
@@ -929,7 +934,10 @@ impl WaveForgeWorld {
             );
             return false;
         }
-        let count = self.tile_count();
+        // The world's rule set, which may not be the last one `load_rules` read.
+        let count = self.worker_rules.as_ref().map_or(0, |file| {
+            i32::try_from(file.num_tiles()).expect("at most 256 tiles")
+        });
         let Some(tiles) = tiles
             .as_slice()
             .iter()
@@ -1010,7 +1018,7 @@ impl WaveForgeWorld {
     /// run and session; its low 32 bits are the index of the instance's cell.
     #[func]
     fn instance_sets(&self, chunk: Vector3i, names: PackedStringArray) -> Array<VarDictionary> {
-        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+        let (Some(worker), Some(rules)) = (&self.worker, &self.worker_rules) else {
             return Array::new();
         };
         let Some(generated) = worker.chunk(from_vector(chunk)) else {
@@ -1162,12 +1170,11 @@ impl WaveForgeWorld {
             })
     }
 
-    /// The coordinates of every chunk generated and not yet dropped.
     /// What walkers stand on at `position`: the `surface` of the module in the cell holding it,
     /// or an empty string where the module gives none or the chunk is not generated.
     #[func]
     fn surface_at(&self, position: Vector3) -> GString {
-        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+        let (Some(worker), Some(rules)) = (&self.worker, &self.worker_rules) else {
             return GString::new();
         };
         wave_forge::surface_at(
@@ -1200,7 +1207,7 @@ impl WaveForgeWorld {
     /// covering each solid cell once. Empty for a chunk that is not generated.
     #[func]
     fn occluders(&self, chunk: Vector3i) -> Array<Aabb> {
-        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+        let (Some(worker), Some(rules)) = (&self.worker, &self.worker_rules) else {
             return Array::new();
         };
         let Some(chunk) = worker.chunk(from_vector(chunk)) else {
@@ -1221,7 +1228,7 @@ impl WaveForgeWorld {
     #[func]
     fn region_tags(&self, chunk: Vector3i) -> VarDictionary {
         let mut out = VarDictionary::new();
-        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+        let (Some(worker), Some(rules)) = (&self.worker, &self.worker_rules) else {
             return out;
         };
         let Some(chunk) = worker.chunk(from_vector(chunk)) else {
@@ -1251,6 +1258,7 @@ impl WaveForgeWorld {
         out
     }
 
+    /// The coordinates of every chunk generated and not yet dropped.
     #[func]
     fn generated_chunks(&self) -> Array<Vector3i> {
         match &self.worker {
@@ -1351,7 +1359,8 @@ impl WaveForgeWorld {
     ///
     /// Returns how many chunks got a body.
     fn update_colliders(&mut self, updated: &[ChunkCoord]) -> usize {
-        let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
+        let (Some(worker), Some(rules), Some(focus)) =
+            (&self.worker, &self.worker_rules, self.followed)
         else {
             return 0;
         };
@@ -1434,7 +1443,8 @@ impl WaveForgeWorld {
     /// frame, nearest first, as bodies are built, and again when a chunk's tiles change; drops it
     /// from the chunks out of range.
     fn update_audio(&mut self, updated: &[ChunkCoord]) {
-        let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
+        let (Some(worker), Some(rules), Some(focus)) =
+            (&self.worker, &self.worker_rules, self.followed)
         else {
             return;
         };
@@ -1477,7 +1487,8 @@ impl WaveForgeWorld {
     /// Keeps a proxy on every generated chunk while `proxy_distance` is zero or more, building a
     /// few a frame, nearest first, and again when a chunk's tiles change; frees the others.
     fn update_proxies(&mut self, updated: &[ChunkCoord]) {
-        let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
+        let (Some(worker), Some(rules), Some(focus)) =
+            (&self.worker, &self.worker_rules, self.followed)
         else {
             return;
         };
@@ -1540,7 +1551,8 @@ impl WaveForgeWorld {
     /// Keeps an occluder on every chunk within `occluder_radius` of the followed chunk, building a
     /// few a frame, nearest first, and again when a chunk's tiles change; frees the others.
     fn update_occluders(&mut self, updated: &[ChunkCoord]) {
-        let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
+        let (Some(worker), Some(rules), Some(focus)) =
+            (&self.worker, &self.worker_rules, self.followed)
         else {
             return;
         };
@@ -1665,7 +1677,7 @@ impl WaveForgeWorld {
             }
             self.shape_faces.insert(name.clone(), faces);
         }
-        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+        let (Some(worker), Some(rules)) = (&self.worker, &self.worker_rules) else {
             return;
         };
         server.map_set_use_edge_connections(map, false);
