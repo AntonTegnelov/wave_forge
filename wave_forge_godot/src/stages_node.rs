@@ -5238,25 +5238,19 @@ impl WaveForgeStages {
             radius < 0 || (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()) <= radius
         };
         let mut holder = self.base().clone();
-        let result = self
-            .placements
-            .place(&mut holder, scenario, focus, budget, near, items);
-        match result {
-            Ok(spawned) => {
-                let count = spawned.len();
-                for (node, chunk, id) in spawned {
-                    self.signals()
-                        .instance_spawned()
-                        .emit(&node, to_vector(chunk), id);
-                }
-                count
-            }
-            Err(error) => {
-                godot_error!("wave forge: {error}");
-                self.placements.clear();
-                0
-            }
+        let (spawned, failed) =
+            self.placements
+                .place(&mut holder, scenario, focus, budget, near, items);
+        for error in failed {
+            godot_error!("wave forge: {error}");
         }
+        let count = spawned.len();
+        for (node, chunk, id) in spawned {
+            self.signals()
+                .instance_spawned()
+                .emit(&node, to_vector(chunk), id);
+        }
+        count
     }
 
     /// Grows grass on the chunks within `grass_radius` of the followed one whose ground is built,

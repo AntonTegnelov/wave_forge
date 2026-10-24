@@ -681,7 +681,8 @@ the process when loaded on a loader thread
 Each scene is drawn one of two ways, chosen when it is bound:
 
 - **A lone mesh:** a scene whose root is a `MeshInstance3D` without children or a script is drawn as
-  one `RenderingServer` MultiMesh per chunk and kind, never as nodes. A point's MultiMesh takes no
+  one `RenderingServer` MultiMesh per chunk and kind, never as nodes, with the instance's material
+  override or surface override materials on a copy of its mesh. A point's MultiMesh takes no
   global illumination, as a prop's; an Assemble piece's, Cave room's or town module's is static, as a building's, so
   SDFGI and baked lighting take it in ([Global illumination](#global-illumination)).
 - **Nodes:** any other scene is instantiated as nodes under the `WaveForgeStages` node, at the
