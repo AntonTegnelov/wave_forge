@@ -93,9 +93,9 @@ func _process(_delta: float) -> bool:
 				phase = "city_arrive"
 				started_usec = Time.get_ticks_usec()
 		"city_arrive":
-			# Repairs can rewrite a chunk after it arrives, so the view counts as settled once
-			# nothing has changed for a second.
-			if updated.has(ORIGIN) and Time.get_ticks_usec() - last_update_usec > 1000000:
+			# Repairs can rewrite a chunk after it arrives, when a neighbour does, so the view counts as
+			# settled once every chunk of it has arrived and nothing has changed for a second since.
+			if _view_arrived() and Time.get_ticks_usec() - last_update_usec > 1000000:
 				first_tiles = city.tiles_at(ORIGIN)
 				city.follow(Vector3(2000, 0, 8))
 				phase = "city_away"
@@ -123,6 +123,14 @@ func _process(_delta: float) -> bool:
 				quit(0)
 				return true
 	return false
+
+## Whether every chunk of the city's view around the origin has arrived.
+func _view_arrived() -> bool:
+	for y in range(-1, 2):
+		for x in range(-1, 2):
+			if not updated.has(Vector3i(x, y, 0)):
+				return false
+	return true
 
 ## A frozen city around the origin, keeping what it evicts in the directory.
 func _city() -> void:
