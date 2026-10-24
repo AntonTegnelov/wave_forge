@@ -368,14 +368,14 @@ pub(super) fn cellular(
     let mut closest_hash = 0;
     let jitter = 0.396_143_53 * jitter;
 
-    let mut x_primed = (xr - 1).wrapping_mul(PRIME_X);
-    let y_primed_base = (yr - 1).wrapping_mul(PRIME_Y);
-    let z_primed_base = (zr - 1).wrapping_mul(PRIME_Z);
-    for xi in xr - 1..=xr + 1 {
+    let mut x_primed = xr.wrapping_sub(1).wrapping_mul(PRIME_X);
+    let y_primed_base = yr.wrapping_sub(1).wrapping_mul(PRIME_Y);
+    let z_primed_base = zr.wrapping_sub(1).wrapping_mul(PRIME_Z);
+    for xi in (-1..=1).map(|offset| xr.wrapping_add(offset)) {
         let mut y_primed = y_primed_base;
-        for yi in yr - 1..=yr + 1 {
+        for yi in (-1..=1).map(|offset| yr.wrapping_add(offset)) {
             let mut z_primed = z_primed_base;
-            for zi in zr - 1..=zr + 1 {
+            for zi in (-1..=1).map(|offset| zr.wrapping_add(offset)) {
                 let hash = hash(seed, x_primed, y_primed, z_primed);
                 let index = (hash & (255 << 2)) as usize;
                 let offset = [
