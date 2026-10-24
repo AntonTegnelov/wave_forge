@@ -373,3 +373,32 @@ fn a_noise_the_pack_does_not_name_is_refused_by_stage() {
         "{scatter:?}"
     );
 }
+
+// An octave's coordinate grows by the lacunarity each time, and leaving i32 must wrap, as the C++
+// does, rather than panic in a debug build. What the noise gives that far out is as meaningless as
+// Godot's, so only that it gives the same bits each time is checked.
+#[test]
+fn a_coordinate_scaled_beyond_the_lattice_wraps_instead_of_panicking() {
+    for noise_type in [
+        NoiseType::Perlin,
+        NoiseType::Cellular,
+        NoiseType::SimplexSmooth,
+    ] {
+        let noise = NoiseConfig {
+            noise_type,
+            frequency: 0.01,
+            fractal_lacunarity: 10.0,
+            fractal_octaves: 10,
+            ..NoiseConfig::default()
+        };
+
+        let sampled = || {
+            [-1e3_f32, 1e3]
+                .map(|x| [noise.sample(x, 0.5), noise.sample_3d(x, 0.5, 0.5)].map(f32::to_bits))
+        };
+
+        let first = sampled();
+
+        assert_eq!(first, sampled(), "{noise_type:?}");
+    }
+}

@@ -2832,9 +2832,17 @@ impl Pack {
                     capacity,
                     erosion,
                     deposition,
-                    fade: _,
+                    fade,
                     gives: _,
                 } => {
+                    // Without a fade the change reaches the region's edge columns, and two
+                    // regions' fields part along their border.
+                    if *fade == 0 {
+                        return Err(invalid(
+                            "a fade of 0 columns, which leaves a step at every region border"
+                                .to_owned(),
+                        ));
+                    }
                     let shares = [("erosion", *erosion), ("deposition", *deposition)];
                     if let Some((name, share)) = shares
                         .iter()
@@ -2865,8 +2873,14 @@ impl Pack {
                     slope,
                     passes,
                     rate,
-                    fade: _,
+                    fade,
                 } => {
+                    if *fade == 0 {
+                        return Err(invalid(
+                            "a fade of 0 columns, which leaves a step at every region border"
+                                .to_owned(),
+                        ));
+                    }
                     if *region == 0
                         || !(1..=MAX_PASSES).contains(passes)
                         || !(*slope >= 0.0 && slope.is_finite())

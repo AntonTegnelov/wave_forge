@@ -190,10 +190,12 @@ pub(crate) fn edge_hash(
         Edge::South => ((x, y - 1), 1),
         Edge::North => ((x, y), 1),
     };
+    // The axis is mixed into the stream word, not into a coordinate: XOR-ed into one, it would
+    // name two edges alike, the x edge above (x, y) and the y edge above (x, y ^ 3).
     pcg3d([
-        world ^ salt ^ 0x6564_6765,
+        world ^ salt ^ 0x6564_6765 ^ (axis + 1_u32).wrapping_mul(0x85EB_CA6B),
         (low.0 as u32) ^ purpose.wrapping_mul(0x9E37_79B9),
-        (low.1 as u32) ^ (axis + 1),
+        low.1 as u32,
     ])[0]
 }
 
@@ -203,4 +205,31 @@ pub(crate) const fn region_of(chunk: wfc_core::ChunkCoord, size: u32) -> (i32, i
         chunk.x.div_euclid(size as i32),
         chunk.y.div_euclid(size as i32),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn every_edge_has_a_hash_of_its_own_and_both_sides_agree() {
+        let mut named: BTreeMap<u32, ((i32, i32), Edge)> = BTreeMap::new();
+        for y in -4..4 {
+            for x in -4..4 {
+                for edge in [Edge::East, Edge::North] {
+                    let hash = edge_hash(7, 11, (x, y), edge, 0);
+                    let across = match edge {
+                        Edge::East => edge_hash(7, 11, (x + 1, y), Edge::West, 0),
+                        _ => edge_hash(7, 11, (x, y + 1), Edge::South, 0),
+                    };
+
+                    assert_eq!(hash, across, "{edge:?} of {:?}", (x, y));
+                    if let Some(other) = named.insert(hash, ((x, y), edge)) {
+                        panic!("{edge:?} of {:?} hashes as {other:?}", (x, y));
+                    }
+                }
+            }
+        }
+    }
 }

@@ -3,8 +3,9 @@
 
 use super::runtime::SiteId;
 use crate::towns::{Outside, Selector, Town, TownError, TownRequest, TownSolver};
-use std::sync::Mutex;
+use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -43,10 +44,13 @@ pub(crate) struct Done {
     pub(crate) ms: f64,
 }
 
-/// The runtime's end of the town thread, which solves the jobs it is sent in order until the
-/// runtime drops its end, and then drops the solver before the drop returns.
+/// The runtime's end of the town thread, which solves the jobs it is sent in order, skipping those
+/// the runtime has forgotten, until the runtime drops its end, and then drops the solver before
+/// the drop returns.
 pub(crate) struct TownThread {
     jobs: Sender<Job>,
+    /// The tickets of the jobs sent and not yet taken back that the runtime still wants.
+    live: Arc<Mutex<BTreeSet<u64>>>,
     /// Behind a lock only so a runtime can be shared between the threads that generate its
     /// products; only the runtime's own thread takes from it.
     done: Mutex<Receiver<Done>>,
@@ -57,10 +61,19 @@ impl TownThread {
     pub(crate) fn spawn(mut solver: Box<dyn TownSolver>) -> Self {
         let (jobs, taken) = channel::<Job>();
         let (sent, done) = channel::<Done>();
+        let live = Arc::new(Mutex::new(BTreeSet::new()));
+        let wanted = Arc::clone(&live);
         let thread = std::thread::Builder::new()
             .name("wave forge towns".to_owned())
             .spawn(move || {
                 for job in taken {
+                    if !wanted
+                        .lock()
+                        .expect("no thread panics holding the lock")
+                        .contains(&job.key.ticket)
+                    {
+                        continue;
+                    }
                     let started = Instant::now();
                     let town = solver.solve(&TownRequest {
                         rules: &job.rules,
@@ -90,14 +103,29 @@ impl TownThread {
             .expect("a thread");
         Self {
             jobs,
+            live,
             done: Mutex::new(done),
             thread: Some(thread),
         }
     }
 
     pub(crate) fn send(&self, job: Job) {
+        self.lock_live().insert(job.key.ticket);
         // A thread that stopped is reported by `take`.
         let _ = self.jobs.send(job);
+    }
+
+    /// Tells the thread the jobs of `tickets` are no longer wanted, so it skips those it has not
+    /// started.
+    pub(crate) fn forget(&self, tickets: impl IntoIterator<Item = u64>) {
+        let mut live = self.lock_live();
+        for ticket in tickets {
+            live.remove(&ticket);
+        }
+    }
+
+    fn lock_live(&self) -> std::sync::MutexGuard<'_, BTreeSet<u64>> {
+        self.live.lock().expect("no thread panics holding the lock")
     }
 
     /// What the thread has finished, waiting up to `wait` for the first of it.
@@ -105,6 +133,13 @@ impl TownThread {
     /// # Errors
     /// [`Stopped`] if the thread has stopped, which only a panic in the solver does.
     pub(crate) fn take(&self, wait: Duration) -> Result<Vec<Done>, Stopped> {
+        let done = self.receive(wait)?;
+        self.forget(done.iter().map(|done| done.key.ticket));
+        Ok(done)
+    }
+
+    /// What the thread has sent back, waiting up to `wait` for the first of it.
+    fn receive(&self, wait: Duration) -> Result<Vec<Done>, Stopped> {
         let finished = self.done.lock().expect("no thread panics holding the lock");
         let mut done = Vec::new();
         if wait > Duration::ZERO {
@@ -131,7 +166,9 @@ impl TownThread {
 // thread.
 impl Drop for TownThread {
     fn drop(&mut self) {
-        // Closing the channel ends the thread's loop once the job it is on is solved.
+        // Forgetting every job and closing the channel ends the thread's loop once the job it is
+        // on is solved: the queued ones are skipped.
+        self.lock_live().clear();
         let (closed, _) = channel::<Job>();
         drop(std::mem::replace(&mut self.jobs, closed));
         if let Some(thread) = self.thread.take() {

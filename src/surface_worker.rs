@@ -6,7 +6,7 @@
 //! and hands the surface back once it is built. Each request carries a ticket, and only the
 //! result of a chunk's newest request comes back, so an engine that asked again after an edit, or
 //! cancelled after a volume was dropped, never draws a surface built from volumes it no longer
-//! holds.
+//! holds. The thread skips a request that has gone stale before it starts on it.
 
 use crate::stages::Product;
 use crate::volume_mesh::{VolumeMesh, volume_mesh};
@@ -27,8 +27,9 @@ struct Job {
 pub struct SurfaceWorker {
     jobs: Sender<Job>,
     done: Mutex<Receiver<(u64, VolumeMesh)>>,
-    /// The ticket of each chunk's newest request, which only its own result answers.
-    asked: HashMap<ChunkCoord, u64>,
+    /// The ticket of each chunk's newest request, which only its own result answers, shared with
+    /// the thread so it skips the others.
+    asked: Arc<Mutex<HashMap<ChunkCoord, u64>>>,
     tickets: u64,
 }
 
@@ -41,11 +42,21 @@ impl SurfaceWorker {
     pub fn spawn() -> Self {
         let (jobs, taken) = channel::<Job>();
         let (finished, done) = channel();
+        let asked = Arc::new(Mutex::new(HashMap::new()));
+        let wanted = Arc::clone(&asked);
         // Not joined: the thread ends when the worker, and with it the job sender, is dropped.
         std::thread::Builder::new()
             .name("wave forge surfaces".to_owned())
             .spawn(move || {
                 for job in taken {
+                    let newest = wanted
+                        .lock()
+                        .expect("no thread panics holding the lock")
+                        .get(&job.chunk)
+                        == Some(&job.ticket);
+                    if !newest {
+                        continue;
+                    }
                     let mesh = volume_mesh(
                         job.chunk,
                         |at| {
@@ -67,7 +78,7 @@ impl SurfaceWorker {
         Self {
             jobs,
             done: Mutex::new(done),
-            asked: HashMap::new(),
+            asked,
             tickets: 0,
         }
     }
@@ -81,7 +92,7 @@ impl SurfaceWorker {
     /// If the worker's thread has stopped, which only a panic in [`volume_mesh`] does.
     pub fn build(&mut self, chunk: ChunkCoord, around: [Arc<Product>; 9], voxel_size: [f32; 3]) {
         self.tickets += 1;
-        self.asked.insert(chunk, self.tickets);
+        self.asked().insert(chunk, self.tickets);
         self.jobs
             .send(Job {
                 ticket: self.tickets,
@@ -94,32 +105,39 @@ impl SurfaceWorker {
 
     /// Forgets the request for `chunk`, if one is waiting, so its result never comes back.
     pub fn cancel(&mut self, chunk: ChunkCoord) {
-        self.asked.remove(&chunk);
+        self.asked().remove(&chunk);
     }
 
     /// Whether a request for `chunk` is waiting for its surface.
     #[must_use]
     pub fn is_building(&self, chunk: ChunkCoord) -> bool {
-        self.asked.contains_key(&chunk)
+        self.asked().contains_key(&chunk)
     }
 
     /// How many requests are waiting for their surfaces.
     #[must_use]
     pub fn building(&self) -> usize {
-        self.asked.len()
+        self.asked().len()
     }
 
     /// The surfaces built since the last call that answer their chunk's newest request, in the
     /// order they were built.
     pub fn drain(&mut self) -> Vec<VolumeMesh> {
         let done = self.done.lock().expect("only the engine's thread drains");
+        let mut asked = self.asked();
         let mut out = Vec::new();
         while let Ok((ticket, mesh)) = done.try_recv() {
-            if self.asked.get(&mesh.chunk) == Some(&ticket) {
-                self.asked.remove(&mesh.chunk);
+            if asked.get(&mesh.chunk) == Some(&ticket) {
+                asked.remove(&mesh.chunk);
                 out.push(mesh);
             }
         }
         out
+    }
+
+    fn asked(&self) -> std::sync::MutexGuard<'_, HashMap<ChunkCoord, u64>> {
+        self.asked
+            .lock()
+            .expect("no thread panics holding the lock")
     }
 }

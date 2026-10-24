@@ -546,8 +546,10 @@ left out takes Godot's default: `noise_type` (`Simplex`, `SimplexSmooth`, `Cellu
 `ValueCubic`, `Value`), `seed`, `frequency`, `offset`, the `fractal_` properties, the `cellular_`
 properties and the `domain_warp_` properties. `wave_forge::noise::NoiseConfig::sample` and
 `sample_3d` are a port of FastNoiseLite 1.1.0, the version Godot bundles, and give exactly what Godot
-4.7's `get_noise_2d` and `get_noise_3d` give: `tests/fastnoise.rs` compares 2 560 samples of each
-over 80 configurations that Godot computed, with no tolerance. A noise keeps its own seed, as a resource does, so the world's seed does not change it.
+4.7's x86_64 build's `get_noise_2d` and `get_noise_3d` give: `tests/fastnoise.rs` compares 2 560
+samples of each over 80 configurations that Godot computed, with no tolerance. The port gives the
+same bits on every platform; a Godot build whose compiler fuses multiply-adds, as arm64 builds may,
+can differ from it in the last bits. A noise keeps its own seed, as a resource does, so the world's seed does not change it.
 
 `Runtime::with_noise(name, config)` replaces a named noise, which is how an engine hands in a
 resource; the Godot node's `noises` does it ([godot.md](godot.md#waveforgestages)). Loading refuses
@@ -1251,7 +1253,7 @@ cell, times its speed and its water, which evaporates as it runs. A slope is mea
 coarse stage ([Levels](#levels)) drains its world map as a fine one would its columns.
 
 A droplet that leaves its region stops, and the worn field fades into the input over `fade` columns
-(default 16) from the region's edges, so regions never read each other, the field meets its input
+(default 16, and at least 1) from the region's edges, so regions never read each other, the field meets its input
 along every region border, and chunks are the same in any order and in every run. A region is
 drained when its first chunk is generated, from its whole height field, so it suits a coarse stage
 over a finite world best: the continent drains its 512 by 512 columns at scale 4 as one region
@@ -1279,10 +1281,10 @@ diagonal's length for a diagonal neighbour), it sheds `rate` (default 0.5) of ha
 excess to the lower ones, shared by how far each lies below; `passes` (default 100) passes run, each
 working out every column's shedding from the field as the pass found it and applying all of it at
 once, so the result is the same in any order. A slope is measured in cells, as a Droplets stage's
-is. The change fades into the input over `fade` columns (default 16) from the region's edges, so
-regions never read each other, the field meets its input along every region border, and chunks are
-the same in any order and in every run. Loading refuses a region or passes of 0, a negative slope,
-and a rate beyond 0 to 1.
+is. The change fades into the input over `fade` columns (default 16, and at least 1) from the
+region's edges, so regions never read each other, the field meets its input along every region border, and chunks are
+the same in any order and in every run. Loading refuses a region, passes or a fade of 0, a negative
+slope, and a rate beyond 0 to 1.
 
 Enough passes bring ground to rest at `slope` everywhere, cliffs included. To keep a cliff's face
 and gather the debris at its foot, as the canyon preset does, the ground is the higher of the rock

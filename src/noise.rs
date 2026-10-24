@@ -30,9 +30,11 @@
 //! [`NoiseConfig`] has the properties of Godot's `FastNoiseLite` resource, with the same names
 //! and defaults, so a noise tuned in Godot's inspector reads the same in a pack.
 //! [`NoiseConfig::sample`] and [`NoiseConfig::sample_3d`] equal Godot 4.7's
-//! `FastNoiseLite.get_noise_2d` and `get_noise_3d` for the same properties: they do the same `f32`
-//! operations in the same order, with the same wrapping integer hashes, and `tests/fastnoise.rs`
-//! holds them to values Godot itself computed.
+//! `FastNoiseLite.get_noise_2d` and `get_noise_3d` for the same properties, as its x86_64 build
+//! computes them: they do the same `f32` operations in the same order, with the same wrapping
+//! integer hashes, and `tests/fastnoise.rs` holds them to values Godot itself computed. The port
+//! gives the same bits on every platform; a Godot build that fuses multiply-adds, as arm64 builds
+//! may, can differ from it in the last bits.
 //!
 //! FastNoiseLite is Copyright (c) 2023 Jordan Peck and contributors, and Godot's resource is
 //! Copyright (c) 2014-present Godot Engine contributors; both are MIT licensed, and the notice is
@@ -414,11 +416,11 @@ impl NoiseConfig {
         let mut closest_hash = 0;
         let jitter = 0.437_015_95 * self.cellular_jitter;
 
-        let mut x_primed = (xr - 1).wrapping_mul(PRIME_X);
-        let y_primed_base = (yr - 1).wrapping_mul(PRIME_Y);
-        for xi in xr - 1..=xr + 1 {
+        let mut x_primed = xr.wrapping_sub(1).wrapping_mul(PRIME_X);
+        let y_primed_base = yr.wrapping_sub(1).wrapping_mul(PRIME_Y);
+        for xi in (-1..=1).map(|offset| xr.wrapping_add(offset)) {
             let mut y_primed = y_primed_base;
-            for yi in yr - 1..=yr + 1 {
+            for yi in (-1..=1).map(|offset| yr.wrapping_add(offset)) {
                 let hash = hash(seed, x_primed, y_primed);
                 let index = (hash & (255 << 1)) as usize;
                 let vec_x = (xi as f32 - x) + RAND_VECS_2D[index] * jitter;
@@ -607,7 +609,12 @@ fn fast_abs(f: f32) -> f32 {
 
 /// FastNoiseLite's `FastFloor`, which gives one less than the floor at a negative integer.
 fn fast_floor(f: f32) -> i32 {
-    if f >= 0.0 { f as i32 } else { f as i32 - 1 }
+    // Wraps where C++ would overflow, as every other lattice operation here does.
+    if f >= 0.0 {
+        f as i32
+    } else {
+        (f as i32).wrapping_sub(1)
+    }
 }
 
 fn fast_round(f: f32) -> i32 {
