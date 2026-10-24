@@ -491,7 +491,7 @@ func _check() -> void:
 		_fail("nothing was dropped although the focus walked away from it")
 		return
 	for chunk: Vector3i in evicted:
-		if _has_chunk(chunk) and not updated.has(chunk):
+		if _has_chunk(chunk) and not present.has(chunk):
 			_fail("chunk %s was reported as dropped but its tiles are still there" % chunk)
 			return
 
