@@ -111,6 +111,23 @@ fn a_town_stands_only_on_its_site_street_level_below_and_air_above() {
             "{chunk:?}"
         );
     }
+    // A chunk holds a town exactly when it lies in some site's footprint, from `min` up to but not
+    // including `max`.
+    let mut runtime = runtime();
+    let focus: Vec<FocusPoint> = area().iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime.request(&focus, &["towns"]).expect("a stage");
+    runtime.run_until_idle().expect("the stages run");
+    let sites: Vec<_> = area()
+        .into_iter()
+        .flat_map(|chunk| runtime.sites("towns", chunk).expect("generated").to_vec())
+        .collect();
+    for (chunk, town) in &tiles {
+        let on_site = sites.iter().any(|site| {
+            (site.min.0..site.max.0).contains(&chunk.x)
+                && (site.min.1..site.max.1).contains(&chunk.y)
+        });
+        assert_eq!(town.is_some(), on_site, "{chunk:?}");
+    }
 }
 
 #[test]
