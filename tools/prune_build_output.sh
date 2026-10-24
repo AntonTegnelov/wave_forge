@@ -59,10 +59,21 @@ target_dirs() {
     return 0
 }
 
-# Seconds since the epoch of the last build in a target dir: the newest entry in its profile
-# directories, which every build touches.
+# Seconds since the epoch of the last build in a target dir: the newest file in its profile
+# directories, which every build writes. Files only: deleting stale outputs touches the
+# directories that held them, which would make a dir pruned look freshly built.
 last_build() {
-    find "$1" -maxdepth 3 -printf '%T@\n' | sort -n | tail -1 | cut -d. -f1
+    find "$1" -maxdepth 3 -type f -printf '%T@\n' | sort -n | tail -1 | cut -d. -f1
+}
+
+# Whether a build holds one of the target dir's profile locks: a build under way has judged its
+# outputs fresh, and one deleted under it fails with a missing file that looks unrelated.
+building() {
+    local lock
+    while read -r lock; do
+        flock -n "$lock" true || return 0
+    done < <(find "$1" -maxdepth 2 -name .cargo-lock)
+    return 1
 }
 
 total_kb() {
@@ -91,6 +102,7 @@ remove() {
 if [[ "$mode" == full ]]; then
     now=$(date +%s)
     while read -r dir; do
+        building "$dir" && continue
         if (( now - $(last_build "$dir") > stale_dir_days * 86400 )); then
             remove "unused for $stale_dir_days days:" "$dir"
             continue
@@ -115,12 +127,14 @@ fi
 budget_kb=$(( budget_gb * 1024 * 1024 ))
 if (( $(total_kb) > budget_kb )); then
     while read -r dir; do
+        building "$dir" && continue
         while read -r incremental; do
             remove "over the $budget_gb GB budget:" "$incremental"
         done < <(incremental_dirs "$dir")
     done < <(target_dirs)
-    mapfile -t by_age < <(target_dirs | while read -r dir; do echo "$(last_build "$dir") $dir"; done \
-        | sort -n | cut -d' ' -f2-)
+    mapfile -t by_age < <(target_dirs | while read -r dir; do
+        building "$dir" || echo "$(last_build "$dir") $dir"
+    done | sort -n | cut -d' ' -f2-)
     for dir in "${by_age[@]}"; do
         (( $(total_kb) > budget_kb )) || break
         remove "over the $budget_gb GB budget, the least recently built:" "$dir"
