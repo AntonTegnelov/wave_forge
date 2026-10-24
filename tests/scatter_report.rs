@@ -81,12 +81,19 @@ fn a_chunks_kept_candidates_are_exactly_its_points() {
 fn every_rejection_names_the_modifier_that_failed() {
     let runtime = runtime();
     let mut counts: BTreeMap<Rejection, usize> = BTreeMap::new();
+    // Every chunk's report, so a candidate crowded from across a seam finds what crowded it.
+    let reports: Vec<_> = area()
+        .into_iter()
+        .map(|chunk| {
+            runtime
+                .scatter_report("trees", chunk)
+                .expect("a Scatter stage")
+        })
+        .collect();
+    let every: Vec<_> = reports.iter().flatten().collect();
 
-    for chunk in area() {
-        let report = runtime
-            .scatter_report("trees", chunk)
-            .expect("a Scatter stage");
-        for judged in &report {
+    for report in &reports {
+        for judged in report {
             let column = (judged.at[0].floor() as i64, judged.at[1].floor() as i64);
             let height = value(&runtime, "height", column);
             let Err(rejection) = judged.verdict else {
@@ -109,18 +116,18 @@ fn every_rejection_names_the_modifier_that_failed() {
                     assert!(value(&runtime, "mask", column) <= 0.35, "{judged:?}");
                 }
                 Rejection::Spacing => {
-                    // Some other candidate that passed lies closer than `apart`: in the report,
-                    // or beyond the chunk's edge.
-                    let (x0, y0) = (chunk.x as f32 * 8.0, chunk.y as f32 * 8.0);
+                    // Some other candidate that passed its own tests lies closer than `apart`: in
+                    // a report of the area, or beyond the area's edge, whose candidates no report
+                    // here holds.
                     let near_edge = [
-                        judged.at[0] - x0,
-                        x0 + 8.0 - judged.at[0],
-                        judged.at[1] - y0,
-                        y0 + 8.0 - judged.at[1],
+                        judged.at[0] + 16.0,
+                        16.0 - judged.at[0],
+                        judged.at[1] + 16.0,
+                        16.0 - judged.at[1],
                     ]
                     .iter()
                     .any(|&d| d < 3.0);
-                    let crowded = report.iter().any(|other| {
+                    let crowded = every.iter().any(|other| {
                         !matches!(other.verdict, Err(reason) if reason != Rejection::Spacing)
                             && other.at != judged.at
                             && libm::hypotf(other.at[0] - judged.at[0], other.at[1] - judged.at[1])
