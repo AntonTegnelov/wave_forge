@@ -18,6 +18,16 @@ var started_usec := 0
 var listened: Node
 var reported := false
 var saved := ""
+## The chunks the run had done, as last reported.
+var latest_done := 0
+## The products the stages had generated when each run first reported a chunk done, the first
+## run's and the one started again's: a run reports its chunks once their block is done, so the
+## first run's holds the whole of its first block, and a run that resumes generates only what the
+## first did not keep of it.
+var first_products := -1
+var resumed_products := -1
+## How far the first run had got when it stopped.
+var stopped_done := 0
 
 func _initialize() -> void:
 	_remove(ProjectSettings.globalize_path(FOLDER))
@@ -35,11 +45,17 @@ func _process(_delta: float) -> bool:
 		return _fail("the %s run was at %s after %d s" % [step, main.phase, TIMEOUT_S])
 	if main.stages != null and main.stages != listened:
 		listened = main.stages
-		listened.world_run_progress.connect(func(_done: int, _total: int, stages: Dictionary) -> void:
+		listened.world_run_progress.connect(func(done: int, _total: int, stages: Dictionary) -> void:
+			latest_done = done
+			if done > 0 and step == "first" and first_products < 0:
+				first_products = _products(stages)
+			elif done > 0 and step == "again" and resumed_products < 0:
+				resumed_products = _products(stages)
 			reported = reported or not stages.is_empty())
 	match step:
 		"first":
-			if main.phase != "generating" or not reported:
+			# Stopped once a chunk is done, so the run started again has something to resume from.
+			if main.phase != "generating" or not reported or latest_done == 0 or first_products <= 0:
 				return false
 			var history: Array = main.history
 			if history.is_empty() or main.stages.table_rows("settlements").size() != history.size():
@@ -58,23 +74,33 @@ func _process(_delta: float) -> bool:
 				return false
 			if main.button.text != "Resume":
 				return _fail("the stopped run's button says %s" % main.button.text)
+			stopped_done = latest_done
 			main.free()
 			step = "again"
 			_start()
 		"again":
-			if main.phase != "generating" or not reported:
+			if main.phase != "generating" or not reported or resumed_products < 0:
 				return false
 			if JSON.stringify(main.history) != JSON.stringify(JSON.parse_string(saved)):
 				return _fail("the game started again took another history than the saved one")
+			if resumed_products >= first_products:
+				return _fail("the run started again had generated %d products by its first chunk, as many as the first run's %d: it did not resume" % [resumed_products, first_products])
 			main.button.pressed.emit()
 			step = "stopping again"
 		"stopping again":
 			if main.phase != "stopped":
 				return false
-			print("check: the continent took a history of %d settlements, saved and the same again for its seed; the run reported its stages and stopped, and started again with the saved history it resumed and stopped" % main.history.size())
+			print("check: the continent took a history of %d settlements, saved and the same again for its seed; the run reported its stages and stopped at %d chunks, and started again with the saved history it resumed, having generated %d products by its first chunk where the first run generated %d, and stopped" % [main.history.size(), stopped_done, resumed_products, first_products])
 			quit(0)
 			return true
 	return false
+
+## How many products the stages of a progress report have generated.
+func _products(stages: Dictionary) -> int:
+	var products := 0
+	for cost: Dictionary in stages.values():
+		products += cost["products"]
+	return products
 
 func _remove(path: String) -> void:
 	var folder := DirAccess.open(path)
