@@ -23,7 +23,8 @@ pub struct ProxyMesh {
     pub positions: Vec<[f32; 3]>,
     /// Unit normals, one per vertex, out of its box.
     pub normals: Vec<[f32; 3]>,
-    /// Linear RGBA, one per vertex: its box's colour.
+    /// RGBA, one per vertex: its box's colour, in the space the caller's colours were given in
+    /// (sRGB from the Godot node), which a coarser level averages in.
     pub colours: Vec<[f32; 4]>,
     /// The levels of detail, finest first.
     pub levels: Vec<ProxyLevel>,

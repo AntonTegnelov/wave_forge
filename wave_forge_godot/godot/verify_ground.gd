@@ -16,8 +16,9 @@
 ## per vertex and the ground's materials and palette, and fading out before the edge of the square of chunks within the radius, measured
 ## from the followed chunk's centre, over which every chunk's ground takes the cover's tint in; the
 ## centre moves with the followed chunk. Last, raising the first
-## column of the chunk beside the origin builds the origin's ground again, which reaches to it, and
-## starting the node again keeps the plugin's texture sets it stacked.
+## column of the chunk beside the origin builds the origin's ground again, which reaches to it,
+## starting the node again keeps the plugin's texture sets it stacked, and the node taken out of
+## the tree and put back draws its ground again.
 extends SceneTree
 
 const CELLS := 8
@@ -50,6 +51,8 @@ var textured_mean: Variant = null
 var sets_before: Texture2DArray
 var restarted_usec := 0
 var restart_ms := 0.0
+var reentered_usec := 0
+var grounds_before := 0
 
 func _initialize() -> void:
 	var wrong := _world("height")
@@ -111,6 +114,8 @@ func _world(material_stage: String) -> Node:
 	return node
 
 func _process(_delta: float) -> bool:
+	if reentered_usec > 0:
+		return _check_reentered()
 	if sets_before != null:
 		return _check_restarted()
 	if raising:
@@ -360,6 +365,27 @@ func _check_restarted() -> bool:
 		_fail("starting again stacked the plugin's texture sets again")
 		return true
 	print("verify_ground: starting again keeps the plugin's texture sets, in %.1f ms" % restart_ms)
+	_check_reentry()
+	return false
+
+## Takes the node out of the tree, which frees what it drew, and puts it back.
+func _check_reentry() -> void:
+	grounds_before = world.ground_chunks().size()
+	root.remove_child(world)
+	if not world.ground_chunks().is_empty():
+		_fail("the ground stayed drawn out of the tree")
+		return
+	root.add_child(world)
+	reentered_usec = Time.get_ticks_usec()
+
+## Whether the node back in the tree has drawn its ground again, from what it still holds.
+func _check_reentered() -> bool:
+	if world.ground_chunks().size() < grounds_before:
+		if (Time.get_ticks_usec() - reentered_usec) / 1e6 > TIMEOUT_S:
+			_fail("only %d of %d grounds came back after the node re-entered the tree" % [world.ground_chunks().size(), grounds_before])
+			return true
+		return false
+	print("verify_ground: the node out of the tree and back draws its %d grounds again" % grounds_before)
 	quit(0)
 	return true
 

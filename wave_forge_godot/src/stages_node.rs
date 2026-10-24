@@ -53,9 +53,9 @@ use wave_forge::noise::{
 use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, Judgement, MAX_CATEGORIES, Pack, Painting, ParamDef,
-    Point, PointId, Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId, StageError,
-    StageEvent, StageKind, StageTiming, StageWorker, TableKind, Value,
+    AmbienceKind, Column, Edit, Edits, Facts, GivenRow, Judgement, MAX_CATEGORIES, Pack, Painting,
+    ParamDef, Point, PointId, Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId,
+    StageError, StageEvent, StageKind, StageTiming, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -416,6 +416,9 @@ pub struct WaveForgeStages {
 
     /// What builds the runtime the node generates with, from its settings when it started.
     builder: Option<Builder>,
+    /// The settings the running world was started with and reads while it runs: one changed while
+    /// it runs, in the inspector say, starts it again rather than mixing with what `start` built.
+    started_with: Option<StartedWith>,
     /// The world run under way, if one is.
     world_run: Option<WorldRunning>,
     /// When the editor's configuration warnings were last looked at.
@@ -893,6 +896,7 @@ impl INode for WaveForgeStages {
             bake_button: PhantomVar::default(),
             sun_and_sky_button: PhantomVar::default(),
             unlit_checked: false,
+            started_with: None,
             bake_path: GString::from("res://wave_forge_bake.tscn"),
             rules_files: VarDictionary::new(),
             noises: Dictionary::new(),
@@ -1065,10 +1069,29 @@ impl INode for WaveForgeStages {
     }
 
     /// Frees the ground's meshes and the bodies, which belong to the rendering and physics
-    /// servers rather than to the node.
+    /// servers rather than to the node. What was drawn is drawn again, from the products the
+    /// stages' thread still holds, if the node comes back into the tree.
     fn exit_tree(&mut self) {
+        let grounds: Vec<ChunkCoord> = self.grounds.keys().copied().collect();
+        let far: Vec<ChunkCoord> = self.far_built.keys().copied().collect();
+        let surfaces = [&self.rock, &self.fluid].map(|layer| {
+            layer
+                .as_ref()
+                .map(|layer| layer.built.keys().copied().collect::<Vec<_>>())
+        });
+        let placed = self.placements.held();
         self.clear_ground_and_bodies();
         self.audio.stop();
+        self.ground_due.extend(grounds);
+        self.far_due.extend(far);
+        for (layer, chunks) in [&mut self.rock, &mut self.fluid].into_iter().zip(surfaces) {
+            if let (Some(layer), Some(chunks)) = (layer, chunks) {
+                layer.due.extend(chunks);
+            }
+        }
+        for (stage, chunk) in placed {
+            self.placements.arrived(&stage, chunk);
+        }
     }
 
     fn get_configuration_warnings(&self) -> PackedStringArray {
@@ -1095,6 +1118,18 @@ impl INode for WaveForgeStages {
             }
         }
         self.update_world_run();
+        if self
+            .started_with
+            .as_ref()
+            .is_some_and(|started| *started != StartedWith::of(self))
+            && self.worker.is_some()
+            && !self.start()
+        {
+            // Started again with settings it refuses: stopped, rather than running on with them.
+            self.worker = None;
+            self.started_with = None;
+            self.clear_ground_and_bodies();
+        }
         if !self.unlit_checked && (!self.grounds.is_empty() || !self.volume_chunks().is_empty()) {
             self.unlit_checked = true;
             crate::first_look::warn_if_unlit(&self.to_gd().upcast());
@@ -1242,6 +1277,43 @@ impl INode for WaveForgeStages {
                 | StageEvent::Judged { .. } => {}
             }
         }
+        // Decals and sounds are built from curve and field stages, which can be generated again,
+        // a road given anew say, while the ground under them stays: those chunks are built again
+        // too. A sound's emitters read the field around their chunk, so its neighbours with it.
+        let decal_stages: Vec<String> = self
+            .curve_decals
+            .keys_shared()
+            .map(|stage| stage.to_string())
+            .collect();
+        let sound_stages: Vec<String> = self
+            .pack
+            .as_ref()
+            .map(|pack| {
+                pack.ambience()
+                    .iter()
+                    .flat_map(|def| match &def.kind {
+                        AmbienceKind::River { curves, height } => [curves.clone(), height.clone()],
+                        AmbienceKind::Lake { lakes, height } => [lakes.clone(), height.clone()],
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (mut decals_changed, mut sounds_changed) = (Vec::new(), Vec::new());
+        for event in &events {
+            let (StageEvent::Generated { stage, chunk } | StageEvent::Dropped { stage, chunk }) =
+                event
+            else {
+                continue;
+            };
+            if decal_stages.contains(stage) {
+                decals_changed.push(*chunk);
+            }
+            if sound_stages.contains(stage) {
+                sounds_changed.extend((-1..=1).flat_map(|dy| {
+                    (-1..=1).map(move |dx| ChunkCoord::new(chunk.x + dx, chunk.y + dy, chunk.z))
+                }));
+            }
+        }
         if let Some(save) = save {
             self.signals()
                 .saved()
@@ -1321,8 +1393,10 @@ impl INode for WaveForgeStages {
         self.slowest_navigation_ms = self.slowest_navigation_ms.max(frame.navigation_ms);
         self.update_occluders(&towns);
         self.update_grass();
-        self.update_audio(&near_changed);
-        self.update_decals(&near_changed);
+        sounds_changed.extend_from_slice(&near_changed);
+        decals_changed.extend_from_slice(&near_changed);
+        self.update_audio(&sounds_changed);
+        self.update_decals(&decals_changed);
         let placing = std::time::Instant::now();
         self.give_mesh_shapes();
         frame.placed = self.update_placements();
@@ -1390,8 +1464,10 @@ impl WaveForgeStages {
 
     /// Loads the pack, `stack`'s or `pack_file`'s, and the rule sets its Solve stages name, and
     /// starts the stages' thread. Returns whether it could start; why not is reported as an
-    /// error. A town solver builds its device on the stages' thread, so a failure there arrives as
-    /// `generation_failed`.
+    /// error. A setting the pack, its rules, noises, facts, parameters, edits or scenes refuse
+    /// leaves a running world as it was; one the ground's textures, materials or grass refuse
+    /// leaves the node stopped. A town solver builds its device on the stages' thread, so a
+    /// failure there arrives as `generation_failed`.
     #[func]
     fn start(&mut self) -> bool {
         let text = match self.pack_source() {
@@ -1425,6 +1501,93 @@ impl WaveForgeStages {
             godot_error!("wave forge: {problem}");
             return false;
         }
+        let solves = pack
+            .stage_names()
+            .any(|name| matches!(pack.kind(name), Some(StageKind::Solve { .. })));
+        let cells = self.chunk_cells;
+        let shape = ChunkShape {
+            x: cells.x.max(1) as u32,
+            y: cells.y.max(1) as u32,
+            z: cells.z.max(1) as u32,
+        };
+        let seed = self.seed as u64;
+        let cache = (!self.kernel_cache.is_empty())
+            .then(|| std::path::PathBuf::from(crate::paths::directory_path(&self.kernel_cache)));
+        let frozen = (!self.frozen_directory.is_empty()).then(|| {
+            std::path::PathBuf::from(crate::paths::directory_path(&self.frozen_directory))
+        });
+        let mut noises = Vec::new();
+        for (name, noise) in self.noises.iter_shared() {
+            let name = name.to_string();
+            let Some(noise) = noise else {
+                godot_error!("wave forge: noise {name:?} has no FastNoiseLite");
+                return false;
+            };
+            match noise_config(&noise) {
+                Ok(config) => noises.push((name, config)),
+                Err(message) => {
+                    godot_error!("wave forge: noise {name:?}: {message}");
+                    return false;
+                }
+            }
+        }
+        let with_noises = move |mut runtime: Runtime| -> Result<Runtime, String> {
+            for (name, config) in &noises {
+                runtime = runtime
+                    .with_noise(name, *config)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(runtime)
+        };
+        let facts = match Facts::new(Arc::clone(&pack), seed) {
+            Ok(facts) => facts,
+            Err(error) => {
+                godot_error!("wave forge: {}: {error}", self.pack_name());
+                return false;
+            }
+        };
+        let mut sampler =
+            match with_noises.clone()(Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y])) {
+                Ok(sampler) => sampler,
+                Err(error) => {
+                    godot_error!("wave forge: {}: {error}", self.pack_name());
+                    return false;
+                }
+            };
+        sampler
+            .set_facts(facts.clone())
+            .expect("facts made for the sampler's pack and seed");
+        let Some(values) = param_values(&self.params) else {
+            godot_error!(
+                "wave forge: params holds a name or value that is not a string and a number"
+            );
+            return false;
+        };
+        if let Err(error) = sampler.set_params(&values) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        // The edits `edits_text` gave, painted in the editor say.
+        if let Err(error) = sampler.set_edits(&self.edits) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        let thread_params = values.clone();
+        let thread_edits = self.edits.clone();
+        let for_thread = Arc::clone(&pack);
+        let thread_facts = facts.clone();
+        let placements = match Placements::new(&self.scenes) {
+            Ok(placements) => placements,
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                return false;
+            }
+        };
+        // Everything above only checked the settings, so a failure left the running world as it
+        // was. From here on the old world goes first, its drawn ground and volumes with it, and a
+        // failure leaves the node stopped rather than half replaced.
+        self.worker = None;
+        self.clear_ground_and_bodies();
         self.ground_textures = None;
         if !self.ground_material_stage.is_empty()
             && self
@@ -1521,81 +1684,6 @@ impl WaveForgeStages {
                 }
             }
         }
-        let solves = pack
-            .stage_names()
-            .any(|name| matches!(pack.kind(name), Some(StageKind::Solve { .. })));
-        let cells = self.chunk_cells;
-        let shape = ChunkShape {
-            x: cells.x.max(1) as u32,
-            y: cells.y.max(1) as u32,
-            z: cells.z.max(1) as u32,
-        };
-        let seed = self.seed as u64;
-        let cache = (!self.kernel_cache.is_empty())
-            .then(|| std::path::PathBuf::from(crate::paths::directory_path(&self.kernel_cache)));
-        let frozen = (!self.frozen_directory.is_empty()).then(|| {
-            std::path::PathBuf::from(crate::paths::directory_path(&self.frozen_directory))
-        });
-        let mut noises = Vec::new();
-        for (name, noise) in self.noises.iter_shared() {
-            let name = name.to_string();
-            let Some(noise) = noise else {
-                godot_error!("wave forge: noise {name:?} has no FastNoiseLite");
-                return false;
-            };
-            match noise_config(&noise) {
-                Ok(config) => noises.push((name, config)),
-                Err(message) => {
-                    godot_error!("wave forge: noise {name:?}: {message}");
-                    return false;
-                }
-            }
-        }
-        let with_noises = move |mut runtime: Runtime| -> Result<Runtime, String> {
-            for (name, config) in &noises {
-                runtime = runtime
-                    .with_noise(name, *config)
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok(runtime)
-        };
-        let facts = match Facts::new(Arc::clone(&pack), seed) {
-            Ok(facts) => facts,
-            Err(error) => {
-                godot_error!("wave forge: {}: {error}", self.pack_name());
-                return false;
-            }
-        };
-        let mut sampler =
-            match with_noises.clone()(Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y])) {
-                Ok(sampler) => sampler,
-                Err(error) => {
-                    godot_error!("wave forge: {}: {error}", self.pack_name());
-                    return false;
-                }
-            };
-        sampler
-            .set_facts(facts.clone())
-            .expect("facts made for the sampler's pack and seed");
-        let Some(values) = param_values(&self.params) else {
-            godot_error!(
-                "wave forge: params holds a name or value that is not a string and a number"
-            );
-            return false;
-        };
-        if let Err(error) = sampler.set_params(&values) {
-            godot_error!("wave forge: {error}");
-            return false;
-        }
-        // The edits `edits_text` gave, painted in the editor say.
-        if let Err(error) = sampler.set_edits(&self.edits) {
-            godot_error!("wave forge: {error}");
-            return false;
-        }
-        let thread_params = values.clone();
-        let thread_edits = self.edits.clone();
-        let for_thread = Arc::clone(&pack);
-        let thread_facts = facts.clone();
         self.rules = rules.clone();
         self.sampler = Some(sampler);
         self.facts = Some(facts);
@@ -1603,14 +1691,7 @@ impl WaveForgeStages {
         self.followed = None;
         self.pending.clear();
         self.ground_due.clear();
-        self.clear_ground_and_bodies();
-        self.placements = match Placements::new(&self.scenes) {
-            Ok(placements) => placements,
-            Err(error) => {
-                godot_error!("wave forge: {error}");
-                return false;
-            }
-        };
+        self.placements = placements;
         for module in self.mesh_shapes.take().into_iter().flatten() {
             self.collision_shapes.remove(&module);
         }
@@ -1664,6 +1745,7 @@ impl WaveForgeStages {
                 )
             },
         ));
+        self.started_with = Some(StartedWith::of(self));
         true
     }
 
@@ -2997,6 +3079,10 @@ impl WaveForgeStages {
         let cell = self.cell_size;
         let along = along.normalized();
         let step = 0.5 * cell.x.min(cell.z);
+        // `start` refuses such a cell, but the setting can change after it.
+        if step.is_nan() || step <= 0.0 {
+            return VarDictionary::new();
+        }
         let mut travelled = 0.0;
         while travelled < 2000.0 {
             let at = from + along * travelled;
@@ -3703,9 +3789,9 @@ impl WaveForgeStages {
             if self.grounds.contains_key(&chunk) {
                 continue;
             }
-            let Some(mesh) = ground(chunk, |at| worker.field(&stage, at), cell) else {
-                continue;
-            };
+            // The ground's mesh is the costly part, so it is built last, once every other input
+            // has arrived, rather than built and thrown away while one is missing.
+            let mesh = || ground(chunk, |at| worker.field(&stage, at), cell);
             // The chunk's lakes and rivers, or wait for the water's field.
             let water = if water_stage.is_empty() {
                 None
@@ -3723,6 +3809,9 @@ impl WaveForgeStages {
                 Some(surface)
             };
             if self.palette.is_none() {
+                let Some(mesh) = mesh() else {
+                    continue;
+                };
                 built.push((chunk, mesh, None, water));
                 continue;
             }
@@ -3761,6 +3850,9 @@ impl WaveForgeStages {
                     Some(wetness) => wetness.iter().zip(&banks).map(|(a, b)| a.max(*b)).collect(),
                     None => banks,
                 })
+            };
+            let Some(mesh) = mesh() else {
+                continue;
             };
             built.push((
                 chunk,
@@ -4378,6 +4470,13 @@ impl WaveForgeStages {
             // Looked at now: built, or waiting for a field around it, whose arrival makes it due
             // again.
             self.far_due.remove(&chunk);
+            // The colours and the cavity have to be there before the far ground is meshed, or the
+            // mesh is thrown away and built again when they arrive.
+            if (!material.is_empty() && worker.categories(&material, chunk).is_none())
+                || (!cavity_stage.is_empty() && worker.field(&cavity_stage, chunk).is_none())
+            {
+                continue;
+            }
             let far = far_ground(
                 chunk,
                 scale as u32,
@@ -5139,25 +5238,19 @@ impl WaveForgeStages {
             radius < 0 || (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()) <= radius
         };
         let mut holder = self.base().clone();
-        let result = self
-            .placements
-            .place(&mut holder, scenario, focus, budget, near, items);
-        match result {
-            Ok(spawned) => {
-                let count = spawned.len();
-                for (node, chunk, id) in spawned {
-                    self.signals()
-                        .instance_spawned()
-                        .emit(&node, to_vector(chunk), id);
-                }
-                count
-            }
-            Err(error) => {
-                godot_error!("wave forge: {error}");
-                self.placements.clear();
-                0
-            }
+        let (spawned, failed) =
+            self.placements
+                .place(&mut holder, scenario, focus, budget, near, items);
+        for error in failed {
+            godot_error!("wave forge: {error}");
         }
+        let count = spawned.len();
+        for (node, chunk, id) in spawned {
+            self.signals()
+                .instance_spawned()
+                .emit(&node, to_vector(chunk), id);
+        }
+        count
     }
 
     /// Grows grass on the chunks within `grass_radius` of the followed one whose ground is built,
@@ -5449,6 +5542,16 @@ impl WaveForgeStages {
                     "{setting} {stage:?} is no {kinds}stage of the pack{scale}"
                 ));
             }
+        }
+        let cell = self.cell_size;
+        if [cell.x, cell.y, cell.z]
+            .iter()
+            .any(|side| side.is_nan() || *side <= 0.0)
+        {
+            problems.push(format!(
+                "cell_size {} has a side that is not positive",
+                self.cell_size
+            ));
         }
         if !self.far_ground_stage.is_empty() && self.chunk_cells.x != self.chunk_cells.y {
             problems.push(format!(
@@ -5886,6 +5989,33 @@ impl WaveForgeStages {
             self.occluders.drop_chunk(chunk);
         }
         self.placements.clear();
+    }
+}
+
+/// The settings a running world was started with that it reads while it runs.
+#[derive(Clone, Debug, PartialEq)]
+struct StartedWith {
+    chunk_cells: Vector3i,
+    cell_size: Vector3,
+    stages: [GString; 8],
+}
+
+impl StartedWith {
+    fn of(node: &WaveForgeStages) -> Self {
+        Self {
+            chunk_cells: node.chunk_cells,
+            cell_size: node.cell_size,
+            stages: [
+                node.ground_stage.clone(),
+                node.ground_material_stage.clone(),
+                node.far_ground_stage.clone(),
+                node.far_ground_material_stage.clone(),
+                node.far_ground_cavity_stage.clone(),
+                node.volume_stage.clone(),
+                node.fluid_stage.clone(),
+                node.grass_stage.clone(),
+            ],
+        }
     }
 }
 

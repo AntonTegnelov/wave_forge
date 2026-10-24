@@ -146,7 +146,12 @@ pub(crate) fn library_from_scenes(directory: &str) -> Result<Gd<MeshLibrary>, St
             .instantiate()
             .ok_or_else(|| format!("{path} does not instantiate"))?;
         let meshes = crate::placements::meshes(&root, Transform3D::IDENTITY);
-        let shapes = body_shapes(&root, Transform3D::IDENTITY, false);
+        // A scene whose root is the body holds its shapes directly under it.
+        let shapes = body_shapes(
+            &root,
+            Transform3D::IDENTITY,
+            root.clone().try_cast::<StaticBody3D>().is_ok(),
+        );
         root.free();
         let name = file
             .rsplit_once('.')

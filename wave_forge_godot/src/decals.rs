@@ -40,18 +40,26 @@ impl RegionDecals {
         self.drop_chunk(chunk);
         let mut decals = Vec::new();
         for (stage, scene, stage_pieces) in pieces {
+            // A scene already refused is not instantiated again only to be freed.
+            if self.refused.contains(stage) {
+                continue;
+            }
             for piece in stage_pieces {
-                let Some(mut decal) = scene
-                    .instantiate()
-                    .and_then(|node| node.try_cast::<Decal>().ok())
-                else {
-                    if self.refused.insert(stage.clone()) {
+                let decal = scene.instantiate().map(|node| node.try_cast::<Decal>());
+                let mut decal = match decal {
+                    Some(Ok(decal)) => decal,
+                    refused => {
+                        // The node a failed cast hands back is the game's to free, not the tree's.
+                        if let Some(Err(node)) = refused {
+                            node.free();
+                        }
+                        self.refused.insert(stage.clone());
                         godot_warn!(
                             "wave forge: the decal scene of {stage:?} in `curve_decals` has no \
                              Decal as its root; it draws nothing"
                         );
+                        break;
                     }
-                    break;
                 };
                 let along = Vector3::new(piece.along[0], 0.0, piece.along[1]);
                 let basis = Basis::from_cols(along, Vector3::UP, along.cross(Vector3::UP));

@@ -5,6 +5,7 @@
 # which runs a focus through a streamed world in real time and asserts what a game would rely on,
 # then `godot/verify_follow.gd`, which lets a world follow a camera with no code and keep its
 # kernels, then `godot/verify_stages.gd`, which generates the valley pack's stages and checks what they hold,
+# then `godot/verify_signals.gd`, which spreads many products' signals over frames by time,
 # then `godot/verify_tables.gd`, which gives a pack tables of facts from GDScript, then
 # `godot/verify_decals.gd`, which lays decals along a road, then
 # `godot/verify_continent_kits.gd`, which checks and binds authored town models, then
@@ -13,6 +14,7 @@
 # `godot/verify_edits.gd`, which fells a tree and raises the ground, then `godot/verify_frozen.gd`,
 # which keeps frozen chunks in a directory while they are out of memory, then `godot/verify_assemble.gd`,
 # which places a village's pieces, then `godot/verify_scenes.gd`, which binds scenes to them, then
+# `godot/verify_variants.gd`, which binds a kind's variants to scenes of their own, then
 # `godot/verify_cave_scenes.gd`, which binds scenes to a cave's rooms and spawns, then
 # `godot/verify_pooling.gd`, which reuses the nodes of scenes that reset themselves, then
 # `godot/verify_ground.gd`, which gives the ground a material per category, then
@@ -28,7 +30,9 @@
 # paints strokes as the editor's brushes do, then `godot/verify_candidates.gd`, which draws a
 # Scatter stage's candidates by what became of each, then `godot/verify_world.gd`, which runs a
 # finite world whole, stopping and resuming, and plays it back, then `godot/verify_continent.gd`,
-# which follows the maximal preset's first settlement to its town, then `godot/verify_inspector.gd`,
+# which follows the maximal preset's first settlement to its town, then
+# `godot/verify_run_exit.gd`, which runs a world into a directory and quits, Godot exiting cleanly,
+# then `godot/verify_inspector.gd`,
 # which checks the nodes' configuration warnings and inspector buttons, then
 # `godot/verify_typed_maps.gd`, which loads a scene saved with untyped maps into the typed ones, then
 # `godot/verify_presets.gd`, which takes every preset the plugin ships as a new node and checks it

@@ -15,8 +15,8 @@ use crate::gi::Gi;
 use godot::classes::multi_mesh::TransformFormat;
 use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
-    DisplayServer, Mesh, MeshInstance3D, MultiMesh, MultiMeshInstance3D, Node, Node3D, PackedScene,
-    RenderingServer, ResourceLoader,
+    DisplayServer, Material, Mesh, MeshInstance3D, MultiMesh, MultiMeshInstance3D, Node, Node3D,
+    PackedScene, RenderingServer, ResourceLoader,
 };
 use godot::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -36,6 +36,9 @@ enum Binding {
     Loading(GString),
     /// A lone mesh, drawn as a MultiMesh per chunk.
     Mesh(Gd<Mesh>),
+    /// A scene that cannot be placed, and why: it failed to load, or its root is not a `Node3D`.
+    /// Reported once; its kind places nothing.
+    Failed(String),
     /// A scene instantiated as nodes.
     Nodes {
         scene: Gd<PackedScene>,
@@ -140,7 +143,7 @@ impl Placements {
                     Binding::Mesh(mesh) if index == 0 => {
                         meshes.push((kind.clone(), mesh.clone()));
                     }
-                    Binding::Mesh(_) | Binding::Nodes { .. } => {}
+                    Binding::Mesh(_) | Binding::Nodes { .. } | Binding::Failed(_) => {}
                 }
             }
         }
@@ -150,6 +153,11 @@ impl Placements {
     /// The kinds bound to a scene.
     pub(crate) fn kinds(&self) -> Vec<String> {
         self.bindings.keys().cloned().collect()
+    }
+
+    /// Every placed chunk, by its stage.
+    pub(crate) fn held(&self) -> Vec<(String, ChunkCoord)> {
+        self.placed.keys().cloned().collect()
     }
 
     /// A stage's chunk has arrived: it is placed in a later frame.
@@ -200,8 +208,8 @@ impl Placements {
     /// scene's as nodes only where `near` holds. Waits while any scene is still loading. Returns the
     /// nodes placed.
     ///
-    /// # Errors
-    /// Naming a scene that failed to load or whose root is not a `Node3D`.
+    /// With them, naming each scene that has just turned out to have failed to load or to have a
+    /// root that is not a `Node3D`, once: its kind places nothing, and every other kind places on.
     pub(crate) fn place(
         &mut self,
         holder: &mut Gd<Node>,
@@ -210,10 +218,11 @@ impl Placements {
         budget_ms: f64,
         near: impl Fn(ChunkCoord) -> bool,
         items: impl Fn(&str, ChunkCoord) -> Option<Vec<Item>>,
-    ) -> Result<Vec<Spawned>, String> {
+    ) -> (Vec<Spawned>, Vec<String>) {
         let started = std::time::Instant::now();
-        if !self.loaded()? {
-            return Ok(Vec::new());
+        let (loaded, failed) = self.loaded();
+        if !loaded {
+            return (Vec::new(), failed);
         }
         let crossed: Vec<(String, ChunkCoord)> = self
             .placed
@@ -272,12 +281,16 @@ impl Placements {
                             pooled.then(|| self.pools.entry((kind.clone(), variant)).or_default());
                         let mut nodes = Vec::with_capacity(items.len());
                         for item in items {
-                            let reused = pool.as_mut().and_then(|pool| pool.pop());
+                            // A pooled node the game freed is gone, not reusable.
+                            let reused = pool.as_mut().and_then(|pool| {
+                                std::iter::from_fn(|| pool.pop())
+                                    .find(|node| node.is_instance_valid())
+                            });
                             let mut node = match reused {
                                 Some(node) => node,
-                                None => scene.try_instantiate_as::<Node3D>().ok_or_else(|| {
-                                    format!("the scene of {kind:?} is not a Node3D")
-                                })?,
+                                None => scene.try_instantiate_as::<Node3D>().expect(
+                                    "a scene whose root is no Node3D failed when it loaded",
+                                ),
                             };
                             node.set_transform(item.transform);
                             holder.add_child(&node);
@@ -290,12 +303,13 @@ impl Placements {
                             placed.nodes.extend(nodes);
                         }
                     }
+                    Binding::Failed(_) => {}
                     Binding::Loading(_) => unreachable!("placing waits for every scene to load"),
                 }
             }
             self.placed.insert(key, placed);
         }
-        Ok(spawned)
+        (spawned, failed)
     }
 
     /// Plain nodes standing for `items`, for a scene of their own
@@ -343,6 +357,7 @@ impl Placements {
                         "the scene of {kind:?} is still loading from {path}"
                     ));
                 }
+                Binding::Failed(why) => return Err(format!("the scene of {kind:?} {why}")),
             }
         }
         Ok(nodes)
@@ -408,10 +423,12 @@ impl Placements {
         by_variant
     }
 
-    /// Whether every scene has loaded, classifying those that just did.
-    fn loaded(&mut self) -> Result<bool, String> {
+    /// Whether every scene has loaded or failed, classifying those that just did, and why each
+    /// that just failed did.
+    fn loaded(&mut self) -> (bool, Vec<String>) {
         let mut loader = ResourceLoader::singleton();
         let mut all = true;
+        let mut failed = Vec::new();
         for (kind, binding) in self
             .bindings
             .iter_mut()
@@ -421,27 +438,38 @@ impl Placements {
                 continue;
             };
             let status = loader.call("load_threaded_get_status", &[path.to_variant()]);
-            match status.try_to::<i64>() {
-                Ok(IN_PROGRESS) => all = false,
-                Ok(LOADED) => {
-                    let scene = loader
-                        .call("load_threaded_get", &[path.to_variant()])
-                        .try_to::<Gd<PackedScene>>()
-                        .map_err(|_| format!("scene of {kind:?}: {path} is not a PackedScene"))?;
-                    *binding = classify(&scene);
+            *binding = match status.try_to::<i64>() {
+                Ok(IN_PROGRESS) => {
+                    all = false;
+                    continue;
                 }
-                _ => return Err(format!("scene of {kind:?}: {path} failed to load")),
+                Ok(LOADED) => match loader
+                    .call("load_threaded_get", &[path.to_variant()])
+                    .try_to::<Gd<PackedScene>>()
+                {
+                    Ok(scene) => classify(&scene),
+                    Err(_) => Binding::Failed(format!("{path} is not a PackedScene")),
+                },
+                _ => Binding::Failed(format!("{path} failed to load")),
+            };
+            if let Binding::Failed(why) = binding {
+                failed.push(format!("scene of {kind:?}: {why}"));
             }
         }
-        Ok(all)
+        (all, failed)
     }
 }
 
 /// The binding of `value` for `kind`: a `PackedScene`, or a path to one whose loading starts on
 /// Godot's loader threads.
 fn binding(kind: &str, value: &Variant) -> Result<Binding, String> {
+    // A scene that is already here and cannot be placed is refused now, with the others.
+    let classified = |scene: &Gd<PackedScene>| match classify(scene) {
+        Binding::Failed(why) => Err(format!("scene of {kind:?}: {why}")),
+        binding => Ok(binding),
+    };
     if let Ok(scene) = value.try_to::<Gd<PackedScene>>() {
-        return Ok(classify(&scene));
+        return classified(&scene);
     }
     let Ok(path) = value.try_to::<GString>() else {
         return Err(format!(
@@ -456,7 +484,7 @@ fn binding(kind: &str, value: &Variant) -> Result<Binding, String> {
             .load(&path)
             .and_then(|resource| resource.try_cast::<PackedScene>().ok())
             .ok_or_else(|| format!("scene of {kind:?}: {path} could not be loaded"))?;
-        return Ok(classify(&scene));
+        return classified(&scene);
     }
     // godot-rust leaves the threaded loader out of builds with its thread safeguards, because a
     // Rust resource loaded on a loader thread aborts the process
@@ -475,18 +503,23 @@ fn binding(kind: &str, value: &Variant) -> Result<Binding, String> {
 /// holding a mesh, otherwise as nodes.
 fn classify(scene: &Gd<PackedScene>) -> Binding {
     let Some(root) = scene.instantiate() else {
-        return Binding::Nodes {
-            scene: scene.clone(),
-            proxy: None,
-            pooled: false,
-        };
+        return Binding::Failed("cannot be instantiated".to_owned());
     };
+    if root.clone().try_cast::<Node3D>().is_err() {
+        let class = root.get_class();
+        root.free();
+        return Binding::Failed(format!("has a {class} at its root, not a Node3D"));
+    }
     let lone = root.get_child_count() == 0 && root.get_script().is_none();
     let mesh = root
         .clone()
         .try_cast::<MeshInstance3D>()
         .ok()
-        .and_then(|instance| instance.get_mesh());
+        .and_then(|instance| {
+            instance
+                .get_mesh()
+                .map(|mesh| with_overrides(&instance, mesh))
+        });
     let binding = match mesh {
         Some(mesh) if lone => Binding::Mesh(mesh),
         _ => Binding::Nodes {
@@ -497,6 +530,28 @@ fn classify(scene: &Gd<PackedScene>) -> Binding {
     };
     root.free();
     binding
+}
+
+/// `mesh` as `instance` draws it: a MultiMesh draws only a mesh, so a copy of it takes the
+/// instance's material override, or else its surface override materials, on its surfaces.
+fn with_overrides(instance: &Gd<MeshInstance3D>, mesh: Gd<Mesh>) -> Gd<Mesh> {
+    let overrides: Vec<Option<Gd<Material>>> = (0..mesh.get_surface_count())
+        .map(|surface| {
+            instance
+                .get_material_override()
+                .or_else(|| instance.get_surface_override_material(surface))
+        })
+        .collect();
+    if overrides.iter().all(Option::is_none) {
+        return mesh;
+    }
+    let mut copy = mesh.duplicate_resource();
+    for (surface, material) in overrides.iter().enumerate() {
+        if let Some(material) = material {
+            copy.surface_set_material(surface as i32, material);
+        }
+    }
+    copy
 }
 
 /// Every mesh under `node`, depth first, with where it sits relative to the scene's root, given
