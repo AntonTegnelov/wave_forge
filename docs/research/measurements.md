@@ -271,7 +271,8 @@ undo, kernels compiled before timing. The tests, all in `wfc-devtools/tests/`:
   time through a `Worker` by a 60 Hz frame loop; a 776 m route in about 230 s, walking 1.4 m/s and
   running 4.2 m/s, generating 3 chunks out, a view of 30 m, an eviction margin of 1.
 - `hole_census.rs` ("the census"): unbounded worlds with one focus of radius 8, world seeds 11, 23,
-  47, 101 and 977; every chunk given up on is solved again from its neighbours' final tiles.
+  47, 101 and 977; every chunk given up on is solved again with its neighbours' cells in a halo of 1
+  released, many seeds in one dispatch, at four budgets.
 - `order_diff.rs`: a 4×4-chunk city, world seeds 8 and 11, generated all at once, chunk by chunk in
   raster order, and in reverse raster order.
 

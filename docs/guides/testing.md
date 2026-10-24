@@ -130,7 +130,7 @@ for correctness ([environment.md](environment.md)). CI runs every layer that is 
 | Golden chunks | `wfc-devtools/tests/golden_chunks.rs` | Every chunk's hash of 8×8 chunks of ground, sites, towns solved on the GPU from the city's module set and trees, compared with `tests/fixtures/golden_chunks.txt`, recorded on the RTX 3070 through dozen; CI runs it on lavapipe, so two vendors' GPUs hash every chunk alike | Yes |
 | End to end | `wfc-devtools/tests/e2e_2d.rs`, `e2e_3d_city.rs` | Whole runs on reference rule sets, with invariants checked and images written ([below](#end-to-end-tests)) | Yes |
 | Streaming (opt-in) | `wfc-devtools/tests/streaming.rs` | A whole world asked for at once comes out seamless, and a city generated in front of a walking player keeps ahead of it against a tick budget | Yes |
-| Hole census (opt-in) | `wfc-devtools/tests/hole_census.rs` | Five city worlds streamed; every chunk given up on is solved again with more seeds, budgets and halos, with where each failed solve contradicted | Yes |
+| Hole census (opt-in) | `wfc-devtools/tests/hole_census.rs` | Five city worlds streamed; every chunk given up on is solved again with its neighbours' cells in a halo of 1 released, many seeds side by side, at four budgets, reporting how many each budget places, the seeds that took and the dispatch's time | Yes |
 | Game session (opt-in) | `wfc-devtools/tests/game_session.rs` | A player walks and runs through an unbounded city in wall-clock time, driving a `Worker` the way an engine does ([below](#the-game-session)) | Yes |
 | Benchmarks (opt-in) | `wfc-devtools/tests/cpu_reference.rs`, `wfc-gpu/tests/block_solver_bench.rs` | The CPU reference's time on the city, and one chunk's cost on the device against one CPU thread and all of them; every chunk a large dispatch reports as solved is valid ([below](#benchmarks)) | The second, yes |
 
@@ -324,9 +324,9 @@ else is counted as not comparable. The share of walkable cells in the largest ne
 printed, not asserted.
 
 `no_chunk_in_view_is_a_hole` holds the bar that no chunk is left unplaced, and so do both streaming
-tests. When one fails, `hole_census.rs` says why: it streams five city worlds and solves every chunk
-given up on again with more seeds, more budget and every halo, and reports where each failed solve
-contradicted.
+tests. When one fails, `hole_census.rs` tells a solver limit from a border no arrangement
+satisfies: it streams five city worlds and solves every chunk given up on again with its halo
+released, many seeds and four budgets, and reports how many each budget places.
 
 ```bash
 cargo test -p wfc-devtools --release --test hole_census -- --ignored --nocapture --test-threads=1

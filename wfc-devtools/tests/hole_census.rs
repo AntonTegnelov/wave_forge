@@ -6,11 +6,11 @@
 //!
 //! `#[ignore]`d: it needs a compute device, and it is a measurement rather than a contract. It asks
 //! for a large unbounded city at once, then takes every chunk the generator reported as failed and
-//! solves that chunk's exact problem again, from the tiles its neighbours ended with, in ways the
-//! generator did not try: with a larger budget, with more seeds, with its neighbours' cells fixed or
-//! released, at every halo the device fits. What still fails with every seed and a large budget is
-//! a border no arrangement satisfies; what solves is a solver limit. Where a failing solve found its
-//! contradiction says which part of a chunk the rule set cannot complete.
+//! solves it again as a repair could: with its neighbours' cells in a halo of 1 released, many
+//! seeds side by side in one dispatch, at four budgets from 8 attempts of 5 000 steps to 64 of
+//! 50 000. For each budget it reports how many chunks some seed placed, how many seeds that took,
+//! and how long the dispatch was. What still fails with every seed and the largest budget is a
+//! border no arrangement at that halo satisfies; what solves is a solver limit.
 
 mod kernels;
 
