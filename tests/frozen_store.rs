@@ -22,13 +22,17 @@ fn pack(tree_spacing: u32) -> Arc<Pack> {
 /// The bytes kept, by layer and chunk.
 type Kept = HashMap<(String, ChunkCoord), Vec<u8>>;
 
-/// A store in memory, shared by every runtime given a clone of it, as a directory on disk is.
+/// A store in memory, shared by every runtime given a clone of it, as a directory on disk is. It
+/// remembers the chunks it was asked for and held.
 #[derive(Clone, Default)]
-struct SharedStore(Arc<Mutex<Kept>>);
+struct SharedStore {
+    kept: Arc<Mutex<Kept>>,
+    found: Arc<Mutex<Vec<ChunkCoord>>>,
+}
 
 impl FrozenStore for SharedStore {
     fn keep(&mut self, layer: &str, chunk: ChunkCoord, bytes: Vec<u8>) -> Result<(), StoreError> {
-        self.0
+        self.kept
             .lock()
             .expect("not poisoned")
             .insert((layer.to_owned(), chunk), bytes);
@@ -36,12 +40,16 @@ impl FrozenStore for SharedStore {
     }
 
     fn fetch(&mut self, layer: &str, chunk: ChunkCoord) -> Result<Option<Vec<u8>>, StoreError> {
-        Ok(self
-            .0
+        let bytes = self
+            .kept
             .lock()
             .expect("not poisoned")
             .get(&(layer.to_owned(), chunk))
-            .cloned())
+            .cloned();
+        if bytes.is_some() {
+            self.found.lock().expect("not poisoned").push(chunk);
+        }
+        Ok(bytes)
     }
 }
 
@@ -75,7 +83,7 @@ fn a_walk_across_the_world_holds_a_bounded_number_of_frozen_chunks() {
         "{most} frozen chunks in memory for a focus of radius 1"
     );
     assert!(
-        store.0.lock().expect("not poisoned").len() >= 50,
+        store.kept.lock().expect("not poisoned").len() >= 50,
         "the chunks walked past are in the store"
     );
 }
@@ -83,7 +91,8 @@ fn a_walk_across_the_world_holds_a_bounded_number_of_frozen_chunks() {
 #[test]
 fn a_frozen_chunk_walked_back_to_is_as_it_was_first_generated() {
     let origin = ChunkCoord::new(0, 0, 0);
-    let mut runtime = Runtime::new(pack(3), 2, [8, 8]).with_store(Box::new(SharedStore::default()));
+    let store = SharedStore::default();
+    let mut runtime = Runtime::new(pack(3), 2, [8, 8]).with_store(Box::new(store.clone()));
     let first = trees(&mut runtime, origin);
 
     trees(&mut runtime, ChunkCoord::new(40, 0, 0));
@@ -91,6 +100,11 @@ fn a_frozen_chunk_walked_back_to_is_as_it_was_first_generated() {
 
     assert!(!first.is_empty(), "no trees to compare");
     assert_eq!(back, first);
+    // From the store, not generated again: the same pack would give the same trees either way.
+    assert!(
+        store.found.lock().expect("not poisoned").contains(&origin),
+        "the origin came back from the store"
+    );
 }
 
 #[test]
