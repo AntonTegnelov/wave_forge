@@ -1390,8 +1390,10 @@ impl WaveForgeStages {
 
     /// Loads the pack, `stack`'s or `pack_file`'s, and the rule sets its Solve stages name, and
     /// starts the stages' thread. Returns whether it could start; why not is reported as an
-    /// error. A town solver builds its device on the stages' thread, so a failure there arrives as
-    /// `generation_failed`.
+    /// error. A setting the pack, its rules, noises, facts, parameters, edits or scenes refuse
+    /// leaves a running world as it was; one the ground's textures, materials or grass refuse
+    /// leaves the node stopped. A town solver builds its device on the stages' thread, so a
+    /// failure there arrives as `generation_failed`.
     #[func]
     fn start(&mut self) -> bool {
         let text = match self.pack_source() {
@@ -1425,6 +1427,93 @@ impl WaveForgeStages {
             godot_error!("wave forge: {problem}");
             return false;
         }
+        let solves = pack
+            .stage_names()
+            .any(|name| matches!(pack.kind(name), Some(StageKind::Solve { .. })));
+        let cells = self.chunk_cells;
+        let shape = ChunkShape {
+            x: cells.x.max(1) as u32,
+            y: cells.y.max(1) as u32,
+            z: cells.z.max(1) as u32,
+        };
+        let seed = self.seed as u64;
+        let cache = (!self.kernel_cache.is_empty())
+            .then(|| std::path::PathBuf::from(crate::paths::directory_path(&self.kernel_cache)));
+        let frozen = (!self.frozen_directory.is_empty()).then(|| {
+            std::path::PathBuf::from(crate::paths::directory_path(&self.frozen_directory))
+        });
+        let mut noises = Vec::new();
+        for (name, noise) in self.noises.iter_shared() {
+            let name = name.to_string();
+            let Some(noise) = noise else {
+                godot_error!("wave forge: noise {name:?} has no FastNoiseLite");
+                return false;
+            };
+            match noise_config(&noise) {
+                Ok(config) => noises.push((name, config)),
+                Err(message) => {
+                    godot_error!("wave forge: noise {name:?}: {message}");
+                    return false;
+                }
+            }
+        }
+        let with_noises = move |mut runtime: Runtime| -> Result<Runtime, String> {
+            for (name, config) in &noises {
+                runtime = runtime
+                    .with_noise(name, *config)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(runtime)
+        };
+        let facts = match Facts::new(Arc::clone(&pack), seed) {
+            Ok(facts) => facts,
+            Err(error) => {
+                godot_error!("wave forge: {}: {error}", self.pack_name());
+                return false;
+            }
+        };
+        let mut sampler =
+            match with_noises.clone()(Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y])) {
+                Ok(sampler) => sampler,
+                Err(error) => {
+                    godot_error!("wave forge: {}: {error}", self.pack_name());
+                    return false;
+                }
+            };
+        sampler
+            .set_facts(facts.clone())
+            .expect("facts made for the sampler's pack and seed");
+        let Some(values) = param_values(&self.params) else {
+            godot_error!(
+                "wave forge: params holds a name or value that is not a string and a number"
+            );
+            return false;
+        };
+        if let Err(error) = sampler.set_params(&values) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        // The edits `edits_text` gave, painted in the editor say.
+        if let Err(error) = sampler.set_edits(&self.edits) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        let thread_params = values.clone();
+        let thread_edits = self.edits.clone();
+        let for_thread = Arc::clone(&pack);
+        let thread_facts = facts.clone();
+        let placements = match Placements::new(&self.scenes) {
+            Ok(placements) => placements,
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                return false;
+            }
+        };
+        // Everything above only checked the settings, so a failure left the running world as it
+        // was. From here on the old world goes first, its drawn ground and volumes with it, and a
+        // failure leaves the node stopped rather than half replaced.
+        self.worker = None;
+        self.clear_ground_and_bodies();
         self.ground_textures = None;
         if !self.ground_material_stage.is_empty()
             && self
@@ -1521,81 +1610,6 @@ impl WaveForgeStages {
                 }
             }
         }
-        let solves = pack
-            .stage_names()
-            .any(|name| matches!(pack.kind(name), Some(StageKind::Solve { .. })));
-        let cells = self.chunk_cells;
-        let shape = ChunkShape {
-            x: cells.x.max(1) as u32,
-            y: cells.y.max(1) as u32,
-            z: cells.z.max(1) as u32,
-        };
-        let seed = self.seed as u64;
-        let cache = (!self.kernel_cache.is_empty())
-            .then(|| std::path::PathBuf::from(crate::paths::directory_path(&self.kernel_cache)));
-        let frozen = (!self.frozen_directory.is_empty()).then(|| {
-            std::path::PathBuf::from(crate::paths::directory_path(&self.frozen_directory))
-        });
-        let mut noises = Vec::new();
-        for (name, noise) in self.noises.iter_shared() {
-            let name = name.to_string();
-            let Some(noise) = noise else {
-                godot_error!("wave forge: noise {name:?} has no FastNoiseLite");
-                return false;
-            };
-            match noise_config(&noise) {
-                Ok(config) => noises.push((name, config)),
-                Err(message) => {
-                    godot_error!("wave forge: noise {name:?}: {message}");
-                    return false;
-                }
-            }
-        }
-        let with_noises = move |mut runtime: Runtime| -> Result<Runtime, String> {
-            for (name, config) in &noises {
-                runtime = runtime
-                    .with_noise(name, *config)
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok(runtime)
-        };
-        let facts = match Facts::new(Arc::clone(&pack), seed) {
-            Ok(facts) => facts,
-            Err(error) => {
-                godot_error!("wave forge: {}: {error}", self.pack_name());
-                return false;
-            }
-        };
-        let mut sampler =
-            match with_noises.clone()(Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y])) {
-                Ok(sampler) => sampler,
-                Err(error) => {
-                    godot_error!("wave forge: {}: {error}", self.pack_name());
-                    return false;
-                }
-            };
-        sampler
-            .set_facts(facts.clone())
-            .expect("facts made for the sampler's pack and seed");
-        let Some(values) = param_values(&self.params) else {
-            godot_error!(
-                "wave forge: params holds a name or value that is not a string and a number"
-            );
-            return false;
-        };
-        if let Err(error) = sampler.set_params(&values) {
-            godot_error!("wave forge: {error}");
-            return false;
-        }
-        // The edits `edits_text` gave, painted in the editor say.
-        if let Err(error) = sampler.set_edits(&self.edits) {
-            godot_error!("wave forge: {error}");
-            return false;
-        }
-        let thread_params = values.clone();
-        let thread_edits = self.edits.clone();
-        let for_thread = Arc::clone(&pack);
-        let thread_facts = facts.clone();
         self.rules = rules.clone();
         self.sampler = Some(sampler);
         self.facts = Some(facts);
@@ -1603,14 +1617,7 @@ impl WaveForgeStages {
         self.followed = None;
         self.pending.clear();
         self.ground_due.clear();
-        self.clear_ground_and_bodies();
-        self.placements = match Placements::new(&self.scenes) {
-            Ok(placements) => placements,
-            Err(error) => {
-                godot_error!("wave forge: {error}");
-                return false;
-            }
-        };
+        self.placements = placements;
         for module in self.mesh_shapes.take().into_iter().flatten() {
             self.collision_shapes.remove(&module);
         }
