@@ -5192,13 +5192,20 @@ impl Runtime {
                         f32::from((rank & 0xFF) as u8) / 256.0,
                         f32::from(((rank >> 8) & 0xFF) as u8) / 256.0,
                     );
+                    // Existence has a hash of its own: drawn from `turn`, every candidate that
+                    // exists would turn by less than `chance` of a full turn.
+                    let chance = pcg3d([
+                        world ^ stage.salt ^ CHANCE_STREAM,
+                        bx as u32,
+                        (by as u32) ^ 0x5bd1_e995 ^ slot.wrapping_mul(0x9E37_79B9),
+                    ])[0];
                     candidates.push(Candidate {
                         column,
                         at: (column.0 as f32 + fraction.0, column.1 as f32 + fraction.1),
                         priority: (rank, bx, by, slot),
                         slot,
                         turn: unit(turn),
-                        exists: u64::from(turn) < threshold,
+                        exists: u64::from(chance) < threshold,
                     });
                 }
             }
@@ -6277,6 +6284,8 @@ struct Candidate {
     exists: bool,
 }
 
+/// Mixed into a Scatter stage's stream for whether a candidate exists at all.
+const CHANCE_STREAM: u32 = 0x6368_6E63;
 /// Mixed into a Scatter stage's stream for how many candidates a block has.
 const COUNT_STREAM: u32 = 0x636E_7473;
 /// Mixed into a Scatter stage's stream for a group's size and its members' places.
