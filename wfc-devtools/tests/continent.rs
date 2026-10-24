@@ -703,14 +703,10 @@ fn a_region_grows_its_vegetation_and_clutter() {
         };
         let covered: usize = when
             .iter()
-            .filter_map(|condition| match condition {
-                Condition::Greater(test, _) => match test.as_ref() {
-                    Expr::Is(of, names) if of == "biome" => Some(names),
-                    _ => None,
-                },
-                _ => None,
+            .flat_map(|condition| match condition {
+                Condition::Greater(test, _) => biomes_named(test),
+                _ => Vec::new(),
             })
-            .flatten()
             .map(|biome| columns.get(biome.as_str()).copied().unwrap_or(0))
             .sum();
         assert!(
