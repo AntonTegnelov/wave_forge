@@ -31,6 +31,8 @@ pub struct BlockSolver<B: ComputeBackend> {
     /// many regions a batch holds, so every capacity of one shape shares it, and compiling, which
     /// takes seconds on some drivers, happens once per shape.
     pipelines: HashMap<RegionShape, Arc<B::Pipeline>>,
+    /// The buffers every capacity of a shape shares, since only one batch runs at a time.
+    shared: HashMap<RegionShape, Shared<B>>,
     compilation: Compilation,
     running: Option<InFlight<B>>,
     next_job: u64,
@@ -58,10 +60,16 @@ struct Kernel<B: ComputeBackend> {
     stats: B::Buffer,
     out_readback: B::Buffer,
     stats_readback: B::Buffer,
-    /// Held because the binding refers to them.
-    _rules: B::Buffer,
-    _weights: B::Buffer,
-    _snaps: B::Buffer,
+}
+
+/// The buffers of a region shape that every batch capacity binds: the rule table, the weights,
+/// and the checkpoint ring, which the host never reads and only the running batch writes, sized
+/// for the largest capacity built so far.
+struct Shared<B: ComputeBackend> {
+    capacity: u32,
+    rules: B::Buffer,
+    weights: B::Buffer,
+    snaps: B::Buffer,
 }
 
 /// A dispatch waiting for the device.
@@ -91,6 +99,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
             config,
             kernels: HashMap::new(),
             pipelines: HashMap::new(),
+            shared: HashMap::new(),
             compilation: Compilation::default(),
             running: None,
             next_job: 1,
@@ -160,7 +169,19 @@ impl<B: ComputeBackend> BlockSolver<B> {
             self.compilation.pipelines += 1;
         }
         self.compilation.ms += compiling.elapsed().as_secs_f64() * 1000.0;
+        // The shared buffers are sized for each shape's largest capacity first, so building the
+        // smaller ones never grows them.
         for &(regions, region) in shapes {
+            let largest = shapes
+                .iter()
+                .filter(|&&(_, other)| other == region)
+                .map(|&(regions, _)| capacity_for(regions))
+                .max()
+                .expect("the shape itself is among them");
+            let spec = KernelSpec::new(region, &self.ruleset, &self.config)
+                .fitted(&self.backend.limits())
+                .map_err(|(needed, available)| GpuError::WorkgroupStorage { needed, available })?;
+            self.ensure_shared(&spec, largest)?;
             self.ensure_kernel(capacity_for(regions), region)?;
         }
         Ok(())
@@ -187,10 +208,14 @@ impl<B: ComputeBackend> BlockSolver<B> {
             return Err(SolverError::Malformed("an empty batch".to_owned()));
         }
         let regions = batch.len() as u32;
-        if regions > self.max_batch() {
+        // A shape whose kernel does not fit the device at all is refused below, by how much
+        // workgroup memory it needs.
+        if let Some(limit) = self.batch_limit(batch.region)
+            && regions > limit.min(self.max_batch())
+        {
             return Err(SolverError::BatchTooLarge {
                 regions: batch.len(),
-                max: self.max_batch(),
+                max: limit.min(self.max_batch()),
             });
         }
         if batch.init.words_per_cell() != self.ruleset.words_per_cell() {
@@ -244,9 +269,24 @@ impl<B: ComputeBackend> BlockSolver<B> {
     /// grows with its cells and its rule set, so a caller widening a halo has to ask.
     #[must_use]
     pub fn fits(&self, region: RegionShape) -> bool {
-        KernelSpec::new(region, &self.ruleset, &self.config)
-            .fitted(&self.backend.limits())
-            .is_ok()
+        self.batch_limit(region).is_some_and(|regions| regions > 0)
+    }
+
+    /// How many regions of `region` a batch's buffers hold within the device's binding limit, or
+    /// `None` for a shape whose kernel does not fit the device at all.
+    fn batch_limit(&self, region: RegionShape) -> Option<u32> {
+        let limits = self.backend.limits();
+        let spec = KernelSpec::new(region, &self.ruleset, &self.config)
+            .fitted(&limits)
+            .ok()?;
+        // A batch's capacity is a power of two, so a limit between two holds the lower.
+        let per_region = bytes(spec.snapshot_words().max(spec.domain_words()));
+        let regions = u32::try_from(limits.storage_binding / per_region).unwrap_or(u32::MAX);
+        Some(if regions == 0 {
+            0
+        } else {
+            1 << regions.ilog2()
+        })
     }
 
     /// Whether the backend can answer [`Solver::poll`] without blocking. A caller that must stay
@@ -281,15 +321,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
             }
         };
         let domains = spec.domain_words() * capacity;
-        let rules = self
-            .backend
-            .create_buffer(bytes(spec.rule_words()), BufferUsage::Input)?;
-        self.backend
-            .write(&rules, 0, self.ruleset.table().as_words());
-        let weights = self
-            .backend
-            .create_buffer(bytes(self.ruleset.num_tiles()), BufferUsage::Input)?;
-        self.backend.write(&weights, 0, self.ruleset.weights());
+        self.ensure_shared(&spec, capacity)?;
         let init = self
             .backend
             .create_buffer(bytes(domains), BufferUsage::Input)?;
@@ -302,10 +334,6 @@ impl<B: ComputeBackend> BlockSolver<B> {
         let params = self
             .backend
             .create_buffer(size_of::<Params>() as u64, BufferUsage::Uniform)?;
-        let snaps = self.backend.create_buffer(
-            bytes(spec.snapshot_words() * capacity),
-            BufferUsage::Scratch,
-        )?;
         let ids = self
             .backend
             .create_buffer(bytes(capacity), BufferUsage::Input)?;
@@ -318,11 +346,20 @@ impl<B: ComputeBackend> BlockSolver<B> {
         let stats_readback = self
             .backend
             .create_buffer(bytes(1 + STATS_WORDS * capacity), BufferUsage::Readback)?;
+        let shared = &self.shared[&region];
         // Binding order is the kernel's binding order.
         let binding = self.backend.create_binding(
             &pipeline,
             &[
-                &rules, &init, &out, &stats, &params, &weights, &snaps, &ids, &seeds,
+                &shared.rules,
+                &init,
+                &out,
+                &stats,
+                &params,
+                &shared.weights,
+                &shared.snaps,
+                &ids,
+                &seeds,
             ],
         )?;
         Ok(Kernel {
@@ -338,10 +375,72 @@ impl<B: ComputeBackend> BlockSolver<B> {
             stats,
             out_readback,
             stats_readback,
-            _rules: rules,
-            _weights: weights,
-            _snaps: snaps,
         })
+    }
+
+    /// Makes the buffers every capacity of `spec`'s shape shares, with a checkpoint ring for at
+    /// least `capacity` regions, unless they are there. A ring too small is replaced by one this
+    /// large, and the kernels already built for the shape are bound to it again.
+    fn ensure_shared(&mut self, spec: &KernelSpec, capacity: u32) -> Result<(), GpuError> {
+        let region = spec.region();
+        if self
+            .shared
+            .get(&region)
+            .is_some_and(|shared| shared.capacity >= capacity)
+        {
+            return Ok(());
+        }
+        let snaps = self.backend.create_buffer(
+            bytes(spec.snapshot_words() * capacity),
+            BufferUsage::Scratch,
+        )?;
+        let shared = match self.shared.remove(&region) {
+            Some(old) => Shared {
+                capacity,
+                snaps,
+                ..old
+            },
+            None => {
+                let rules = self
+                    .backend
+                    .create_buffer(bytes(spec.rule_words()), BufferUsage::Input)?;
+                self.backend
+                    .write(&rules, 0, self.ruleset.table().as_words());
+                let weights = self
+                    .backend
+                    .create_buffer(bytes(self.ruleset.num_tiles()), BufferUsage::Input)?;
+                self.backend.write(&weights, 0, self.ruleset.weights());
+                Shared {
+                    capacity,
+                    rules,
+                    weights,
+                    snaps,
+                }
+            }
+        };
+        for kernel in self
+            .kernels
+            .iter_mut()
+            .filter(|((_, shape), _)| *shape == region)
+            .map(|(_, kernel)| kernel)
+        {
+            kernel.binding = self.backend.create_binding(
+                &kernel.pipeline,
+                &[
+                    &shared.rules,
+                    &kernel.init,
+                    &kernel.out,
+                    &kernel.stats,
+                    &kernel.params,
+                    &shared.weights,
+                    &shared.snaps,
+                    &kernel.ids,
+                    &kernel.seeds,
+                ],
+            )?;
+        }
+        self.shared.insert(region, shared);
+        Ok(())
     }
 
     /// Reads a finished dispatch back.
@@ -415,6 +514,11 @@ impl<B: ComputeBackend> BlockSolver<B> {
 impl<B: ComputeBackend> Solver for BlockSolver<B> {
     fn max_batch(&self) -> u32 {
         self.config.max_batch.min(self.backend.limits().workgroups)
+    }
+
+    fn max_batch_for(&self, region: RegionShape) -> u32 {
+        self.batch_limit(region)
+            .map_or(0, |limit| limit.min(self.max_batch()))
     }
 
     fn accepts(&self, region: RegionShape) -> bool {

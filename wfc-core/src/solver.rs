@@ -169,6 +169,13 @@ pub trait Solver {
     /// The most regions one batch may hold.
     fn max_batch(&self) -> u32;
 
+    /// The most regions of this shape one batch may hold, at most [`Solver::max_batch`]: a device
+    /// bounds how much one of a batch's buffers holds, and a larger region fills it sooner.
+    fn max_batch_for(&self, region: RegionShape) -> u32 {
+        let _ = region;
+        self.max_batch()
+    }
+
     /// Whether the solver can take regions of this shape at all. A device bounds how large a region
     /// may be, so a caller widening a halo asks rather than guessing.
     fn accepts(&self, region: RegionShape) -> bool {
