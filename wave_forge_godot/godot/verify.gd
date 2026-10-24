@@ -69,6 +69,8 @@ var done := false
 ## last bakes began.
 var navigable := {}
 var navigation_wait_usec := -1
+## When the focus was back from its walk, or -1 before.
+var back_usec := -1
 ## How many chunks a path crossed on their navigation_ready, and the chunks one did not.
 var pathed_on_signal := 0
 var missed_on_signal: Array[Vector3i] = []
@@ -278,7 +280,13 @@ func _process(_delta: float) -> bool:
 	var x := _x_at((now - walk_started_usec) / 1e6)
 	if is_nan(x):
 		# Colliders are built a few chunks a frame; the check waits for the last of them.
-		if world.stats()["pending_colliders"] > 0:
+		if back_usec < 0:
+			back_usec = now
+		var pending: int = world.stats()["pending_colliders"]
+		if pending > 0:
+			if (now - back_usec) / 1e6 > LOAD_TIMEOUT_S:
+				_fail("%d chunks' colliders were still pending %.0f s after the walk" % [pending, LOAD_TIMEOUT_S])
+				return true
 			return false
 		# The loop goes on for the navigation check; a failed check has already quit.
 		_check()

@@ -186,6 +186,9 @@ func _process(_delta: float) -> bool:
 	if checked:
 		if _navigation_crosses_town(waited) and _occluders_stand_in_the_towns() and _drawn_collide():
 			_start_walk()
+		elif waited > LOAD_TIMEOUT_S:
+			_fail("the town's navigation, occluders and drawn bodies were not all there after %.0f s" % waited)
+			return true
 		return false
 	for chunk in _view():
 		for stage: String in TARGETS:
@@ -196,6 +199,9 @@ func _process(_delta: float) -> bool:
 				return false
 	var queued: Dictionary = world.stats()
 	if queued["pending_signals"] > 0 or queued["pending_grounds"] > 0 or queued["pending_colliders"] > 0 or queued["pending_placements"] > 0:
+		if waited > LOAD_TIMEOUT_S:
+			_fail("still drawing after %.0f s: %s" % [waited, queued])
+			return true
 		return false
 	print("verify_stages: %d chunks of %s arrived in %.1f s" % [_view().size(), TARGETS, waited])
 	if not _check_towns() or not _check_drawn() or not _check_trees() or not _check_cover():
