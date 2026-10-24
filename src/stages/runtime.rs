@@ -711,6 +711,9 @@ pub struct Runtime {
     /// again when `step` next needs it, so a step of a few products costs no sort of them all.
     queued: Option<BTreeMap<usize, Vec<ChunkCoord>>>,
     focus: Vec<FocusPoint>,
+    /// The current request's targets, each with its own radius or none: asked for again when a
+    /// change drops a computed region, whose inputs a request leaves out once it is computed.
+    targets: Vec<(usize, Option<u32>)>,
     products: BTreeMap<(usize, ChunkCoord), Arc<Product>>,
     towns: Option<TownThread>,
     /// Towns asked of the town thread and not back yet, by Solve stage and site, with the ticket
@@ -886,6 +889,7 @@ impl Runtime {
             needed: BTreeMap::new(),
             queued: None,
             focus: Vec::new(),
+            targets: Vec::new(),
             products: BTreeMap::new(),
             towns: None,
             solving: BTreeMap::new(),
@@ -961,7 +965,7 @@ impl Runtime {
         self.facts = Some(facts);
         self.focused = focused;
         self.footprints = footprints;
-        Ok(self.invalidate(stale))
+        self.invalidate(stale)
     }
 
     /// Whether every row of TableCurves stage `index` makes a curve: a finite start and end, and a
@@ -1212,7 +1216,7 @@ impl Runtime {
             })
             .map(|(reader, _)| (reader, Stale::All))
             .collect();
-        Ok(self.invalidate(stale))
+        self.invalidate(stale)
     }
 
     /// Gives the Painted stages that read painting `name` its pixels, and drops every product that
@@ -1275,7 +1279,7 @@ impl Runtime {
             .into_iter()
             .map(|reader| (reader, Stale::All))
             .collect();
-        Ok(self.invalidate(stale))
+        self.invalidate(stale)
     }
 
     /// What became of every candidate of Scatter stage `stage` whose column lies in `chunk`, a
@@ -1345,7 +1349,7 @@ impl Runtime {
         for (name, &value) in values {
             self.params.insert(name.clone(), value);
         }
-        Ok(self.invalidate(stale))
+        self.invalidate(stale)
     }
 
     /// The value of each of the pack's parameters, by name.
@@ -1358,7 +1362,14 @@ impl Runtime {
     /// (stage, chunk). A chunk of a stage is stale when its reach covers a stale chunk of one of
     /// its inputs, and a town or a region goes with any stale chunk it covers; what is still asked
     /// for is generated again.
-    fn invalidate(&mut self, mut stale: BTreeMap<usize, Stale>) -> Vec<(String, ChunkCoord)> {
+    ///
+    /// # Errors
+    /// What asking again for the current request returns ([`Runtime::request`]), when the change
+    /// drops a computed region.
+    fn invalidate(
+        &mut self,
+        mut stale: BTreeMap<usize, Stale>,
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
         // Sampled region fields are few and cheap to compute again beside what generation holds.
         self.sampled_fields
             .get_mut()
@@ -1441,6 +1452,7 @@ impl Runtime {
         self.assembled
             .retain(|&(stage, _), (site, _)| fresh(stage, site));
         let pack = Arc::clone(&self.pack);
+        let computed = self.computed_regions();
         self.regions.retain(|&(stage, region), _| {
             let size = pack.stages[stage]
                 .kind
@@ -1495,7 +1507,27 @@ impl Runtime {
             .retain(|&(stage, region), _| fresh_cave(stage, region));
         self.budgeted
             .retain(|&(stage, region), _| fresh_cave(stage, region));
-        dropped
+        // A request leaves out the inputs of a region it found computed, so once a computed region
+        // is dropped the inputs that compute it again have to be asked for again.
+        if self.computed_regions() < computed && !self.focus.is_empty() {
+            let (focus, targets) = (self.focus.clone(), self.targets.clone());
+            for gone in self.ask(&focus, &targets)? {
+                if !dropped.contains(&gone) {
+                    dropped.push(gone);
+                }
+            }
+        }
+        Ok(dropped)
+    }
+
+    /// How many regions the runtime holds computed, of every kind of region stage.
+    fn computed_regions(&self) -> usize {
+        self.regions.len()
+            + self.placed.len()
+            + self.region_fields.len()
+            + self.caves.len()
+            + self.tunnels.len()
+            + self.budgeted.len()
     }
 
     /// Replaces the noise the pack names `name` with `noise`, a Godot `FastNoiseLite` resource's
@@ -1589,12 +1621,12 @@ impl Runtime {
         }
         self.edits = folded;
         self.log = edits.clone();
-        Ok(self.invalidate(
+        self.invalidate(
             stale
                 .into_iter()
                 .map(|(stage, chunks)| (stage, Stale::Chunks(chunks)))
                 .collect(),
-        ))
+        )
     }
 
     /// The pack the runtime generates.
@@ -1669,7 +1701,7 @@ impl Runtime {
                 Stale::All => unreachable!("frozen chunks are staled one by one"),
             }
         }
-        dropped.extend(self.invalidate(stale));
+        dropped.extend(self.invalidate(stale)?);
         Ok(dropped)
     }
 
@@ -1964,6 +1996,16 @@ impl Runtime {
                     .ok_or_else(|| StageError::UnknownStage(target.to_owned()))
             })
             .collect::<Result<Vec<(usize, Option<u32>)>, StageError>>()?;
+        self.ask(focus, &targets)
+    }
+
+    /// Asks for each target, a stage's index with its own radius or none, around `focus`, and
+    /// drops what the request does not need.
+    fn ask(
+        &mut self,
+        focus: &[FocusPoint],
+        targets: &[(usize, Option<u32>)],
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
         let around = |radius: Option<u32>| -> BTreeSet<ChunkCoord> {
             focus
                 .iter()
@@ -1980,8 +2022,8 @@ impl Runtime {
         // Focus points are in the WFC lattice's chunks; a coarser target's chunks cover several. A
         // target's chunk wholly outside the world's bound is never asked for.
         let mut needed: BTreeMap<usize, BTreeSet<ChunkCoord>> = targets
-            .into_iter()
-            .map(|(target, radius)| {
+            .iter()
+            .map(|&(target, radius)| {
                 let scale = self.pack.stages[target].scale as i32;
                 let chunks = around(radius)
                     .iter()
@@ -2085,6 +2127,7 @@ impl Runtime {
         self.needed = needed;
         self.queued = None;
         self.focus = focus.to_vec();
+        self.targets = targets.to_vec();
         self.store_unneeded_frozen()?;
         Ok(dropped)
     }
