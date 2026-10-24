@@ -259,6 +259,10 @@ func _apply_preset(path: String, action: String) -> void:
 		undo.add_undo_property(stages, property, stages.get(property))
 	undo.add_do_method(stages, "notify_property_list_changed")
 	undo.add_undo_method(stages, "notify_property_list_changed")
+	# The preview shows the preset at once, as a dropped scene does, and the old settings again on
+	# undo.
+	undo.add_do_method(self, "_restart_preview")
+	undo.add_undo_method(self, "_restart_preview")
 	undo.commit_action()
 
 ## Gives the selected node a stack of its pack_file's pack in place of the file, as one undo action.
