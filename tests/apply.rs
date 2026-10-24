@@ -4,7 +4,7 @@
 //! The ground is a tilted plane, so the height a curve takes is easy to state: a column within a
 //! road's radius takes the height at the nearest point of the road's centre line.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use wave_forge::stages::regions::{Attempt, Curve, CurveId, Edge, RegionInput, RegionJob};
 use wave_forge::stages::{Facts, GivenRow, Pack, RowId, Runtime, StageError, Value};
@@ -174,8 +174,15 @@ fn moving_a_road_drops_only_the_chunks_within_reach_of_where_it_was_and_is() {
     let dropped = runtime.set_facts(facts).expect("facts");
 
     // The road ran through chunk column 0 and now runs through 1; a paved chunk reads 7 cells
-    // around it, so column 2 sees the new road too, and nothing further.
-    assert!(!dropped.is_empty());
+    // around it, so every paved chunk of columns 0 to 2 sees the road where it was or is, along
+    // its whole length, and nothing further does.
+    let paved: BTreeSet<(i32, i32)> = dropped
+        .iter()
+        .filter(|(stage, _)| stage == "paved")
+        .map(|(_, chunk)| (chunk.x, chunk.y))
+        .collect();
+    let within: BTreeSet<(i32, i32)> = (0..8).flat_map(|y| (0..=2).map(move |x| (x, y))).collect();
+    assert_eq!(paved, within);
     assert!(dropped.iter().all(|(_, chunk)| chunk.x <= 2), "{dropped:?}");
 }
 
