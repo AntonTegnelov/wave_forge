@@ -123,7 +123,7 @@ fn a_horizon_reaches_as_far_as_its_reach_and_samples_as_its_chunks_hold() {
 
     let reach = pack.reach("in_bowl", SIZE).expect("a stage");
 
-    assert_eq!(reach["bowl"], 8);
+    assert_eq!(reach["bowl"], [8; 2]);
     for (x, y) in [(24, 24), (30, 19), (5, 40), (41, 63)] {
         let at = [x as f32 + 0.5, y as f32 + 0.5];
         assert_eq!(sampler.sample("in_bowl", at), Ok(in_bowl[&(x, y)]));

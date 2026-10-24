@@ -227,8 +227,12 @@ fn reach_across_levels_is_counted_in_wfc_cells() {
 
     // 3 fine columns, one smooth column read between, then 2 smooth columns and one coarse
     // column read between.
-    assert_eq!(reach.get("smooth"), Some(&(3 + 4)), "{reach:?}");
-    assert_eq!(reach.get("coarse"), Some(&(3 + 4 + 2 * 4 + 8)), "{reach:?}");
+    assert_eq!(reach.get("smooth"), Some(&[(3 + 4); 2]), "{reach:?}");
+    assert_eq!(
+        reach.get("coarse"),
+        Some(&[(3 + 4 + 2 * 4 + 8); 2]),
+        "{reach:?}"
+    );
 }
 
 /// A world map and the land a player walks: a coarse continent and biomes on columns of 8 cells, and

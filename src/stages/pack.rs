@@ -3746,14 +3746,14 @@ impl Pack {
     }
 
     /// How far beyond a column of `target` each stage it depends on has to be generated, in WFC
-    /// cells along the lattice's x, for chunks of `size` columns: the largest sum of reaches along
-    /// any path from `target` to it, each in its reader's columns times the reader's scale, and one
-    /// column more of an input coarser than its reader, which is read between its columns.
+    /// cells along the lattice's x and y, for chunks of `size` columns: the largest sum of reaches
+    /// along any path from `target` to it, each in its reader's columns times the reader's scale,
+    /// and one column more of an input coarser than its reader, which is read between its columns.
     /// `target` itself is included, at 0. `None` if no stage is named `target`.
     #[must_use]
-    pub fn reach(&self, target: &str, size: [u32; 2]) -> Option<BTreeMap<String, u32>> {
+    pub fn reach(&self, target: &str, size: [u32; 2]) -> Option<BTreeMap<String, [u32; 2]>> {
         let target = *self.by_name.get(target)?;
-        let mut reach: BTreeMap<usize, u32> = BTreeMap::from([(target, 0)]);
+        let mut reach: BTreeMap<usize, [u32; 2]> = BTreeMap::from([(target, [0, 0])]);
         // Consumers come after their inputs in `order`, so walking it backwards visits every
         // consumer of a stage before the stage itself.
         for &index in self.order.iter().rev() {
@@ -3765,8 +3765,11 @@ impl Pack {
                 let coarser = self.stages[input].scale;
                 // A coarser input is read between its columns, so one more of them either side.
                 let between = if coarser > scale { coarser } else { 0 };
-                let there = reach.entry(input).or_insert(0);
-                *there = (*there).max(here + span.cells(size)[0] * scale + between);
+                let span = span.cells(size);
+                let there = reach.entry(input).or_insert([0, 0]);
+                for axis in 0..2 {
+                    there[axis] = there[axis].max(here[axis] + span[axis] * scale + between);
+                }
             }
         }
         Some(
@@ -4120,10 +4123,10 @@ mod tests {
         assert_eq!(
             reach,
             BTreeMap::from([
-                ("softer".to_owned(), 0),
-                ("height".to_owned(), 3),
-                ("smooth".to_owned(), 3),
-                ("rough".to_owned(), 5),
+                ("softer".to_owned(), [0, 0]),
+                ("height".to_owned(), [3, 3]),
+                ("smooth".to_owned(), [3, 3]),
+                ("rough".to_owned(), [5, 5]),
             ])
         );
     }
@@ -4231,9 +4234,9 @@ mod tests {
 
         let reach = pack.reach("level", [8, 8]).expect("a stage");
 
-        assert_eq!(reach["towns"], 4);
+        assert_eq!(reach["towns"], [4; 2]);
         // A site lies in its chunk's region of six chunks, at most five chunks from the chunk.
-        assert_eq!(reach["h"], 4 + 5 * 8);
+        assert_eq!(reach["h"], [4 + 5 * 8; 2]);
     }
 
     #[test]

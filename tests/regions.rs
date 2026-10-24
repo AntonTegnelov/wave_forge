@@ -405,5 +405,9 @@ fn a_region_stage_reads_its_inputs_as_far_as_its_region_and_halo() {
 
     let reach = pack.reach("rivers", SIZE).expect("a stage");
 
-    assert_eq!(reach.get("height"), Some(&((3 - 1 + 2) * 8)), "{reach:?}");
+    assert_eq!(
+        reach.get("height"),
+        Some(&[((3 - 1 + 2) * 8); 2]),
+        "{reach:?}"
+    );
 }

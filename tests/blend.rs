@@ -180,7 +180,7 @@ fn the_categories_a_match_reads_are_generated_as_far_out_as_it_blends() {
 
     let reach = pack.reach("step", SIZE).expect("a stage");
 
-    assert_eq!(reach.get("halves"), Some(&5), "{reach:?}");
+    assert_eq!(reach.get("halves"), Some(&[5; 2]), "{reach:?}");
 }
 
 #[test]
