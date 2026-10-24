@@ -250,10 +250,13 @@ func _check_materials() -> bool:
 	return true
 
 ## Every fluid vertex lies in the cave, no higher than the highest pool's level; the pools are
-## water and lava, each drawn in its see-through colour; and no fluid has a body.
+## water and lava, each drawn in its see-through colour; and no fluid has a body: a ray down onto a
+## pool's top, in a chunk with bodies, passes it and meets the rock under it.
 func _check_fluid() -> bool:
 	var seen := [0, 0]
 	var vertices := 0
+	var passed := 0
+	var bodies: Array = world.collider_chunks()
 	for chunk in world.fluid_chunks():
 		var surface: Dictionary = world.fluid_surface(chunk)
 		var positions: PackedVector3Array = surface["positions"]
@@ -265,6 +268,17 @@ func _check_fluid() -> bool:
 				return false
 			seen[materials[i]] += 1
 		vertices += positions.size()
+		if bodies.has(chunk) and positions.size() > 0:
+			var top := positions[0]
+			for position in positions:
+				if position.y > top.y:
+					top = position
+			# A surface is relative to its chunk's corner on the ground plane.
+			var corner := Vector3(chunk.x * CELLS * CELL.x, 0.0, chunk.y * CELLS * CELL.z)
+			var from := corner + top + Vector3.UP * 0.2 * CELL.y
+			var hit := root.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(from, from + Vector3.DOWN * 100.0))
+			if not hit.is_empty() and hit["position"].y < top.y - 0.1 * CELL.y:
+				passed += 1
 		if positions.size() > 0:
 			var arrays := RenderingServer.mesh_surface_get_arrays(world.fluid_mesh_of(chunk), 0)
 			var colours: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
@@ -279,7 +293,10 @@ func _check_fluid() -> bool:
 	if seen[0] == 0 or seen[1] == 0:
 		_fail("%d lava and %d water vertices" % seen)
 		return false
-	print("verify_volume: pools fill the cave's floor, %d glowing lava and %d water vertices drawn see-through in %d chunks, none collided with" % [seen[0], seen[1], world.fluid_chunks().size()])
+	if passed == 0:
+		_fail("no ray onto a pool's top in a chunk with bodies passed it to the rock under it")
+		return false
+	print("verify_volume: pools fill the cave's floor, %d glowing lava and %d water vertices drawn see-through in %d chunks, rays onto %d pools passing them" % [seen[0], seen[1], world.fluid_chunks().size(), passed])
 	return true
 
 func _fail(message: String) -> void:

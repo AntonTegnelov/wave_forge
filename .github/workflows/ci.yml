@@ -29,6 +29,7 @@ env:
 jobs:
   library:
     name: Library
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +63,7 @@ jobs:
     # it without gating until it is stable (#271). Each SHA-512 is from its release's
     # SHA512-SUMS.txt, pinned so a changed download fails the job.
     name: Godot extension${{ matrix.suffix }}
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     continue-on-error: ${{ matrix.next }}
     strategy:
@@ -115,6 +117,7 @@ jobs:
 
   bevy:
     name: Bevy plugin
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

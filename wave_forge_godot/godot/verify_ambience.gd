@@ -21,6 +21,9 @@ var world: Node
 var started_usec := 0
 var settled := 0
 
+## The stream of each key, each its own, so a player of the wrong one shows.
+var sounds: Dictionary[StringName, AudioStream] = {}
+
 func _initialize() -> void:
 	var text := FileAccess.get_file_as_string("res://water.world.ron").replace("stages: [", AMBIENCE)
 	var pack := FileAccess.open("user://ambience.world.ron", FileAccess.WRITE)
@@ -36,7 +39,7 @@ func _initialize() -> void:
 	world.collider_radius = -1
 	world.ground_stage = "ground"
 	world.audio_radius = RADIUS
-	var sounds: Dictionary[StringName, AudioStream] = {
+	sounds = {
 		&"water_river": AudioStreamGenerator.new(),
 		&"water_lake": AudioStreamGenerator.new(),
 	}
@@ -81,6 +84,9 @@ func _process(_delta: float) -> bool:
 		for player: AudioStreamPlayer3D in players:
 			if player.position.is_equal_approx(emitter["position"]):
 				found = true
+				if player.stream != sounds[StringName(emitter["key"])]:
+					_fail("the player at %s plays another stream than %s's" % [player.position, emitter["key"]])
+					return true
 				var db := 20.0 * log(maxf(emitter["volume"], 1e-4)) / log(10.0)
 				if absf(player.volume_db - db) > 1e-3:
 					_fail("a player at %s plays at %f dB, its emitter at %f" % [player.position, player.volume_db, db])
@@ -96,7 +102,7 @@ func _process(_delta: float) -> bool:
 	if rivers == 0:
 		_fail("no river sounds")
 		return true
-	print("verify_ambience: %d sounds play within %d chunks, %d along the river, each at its emitter's position and volume" % [expected.size(), RADIUS, rivers])
+	print("verify_ambience: %d sounds play within %d chunks, %d along the river, each its key's stream at its emitter's position and volume" % [expected.size(), RADIUS, rivers])
 	quit(0)
 	return true
 

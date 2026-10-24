@@ -70,13 +70,19 @@ func _trees_near(radius: float) -> int:
 	var count := 0
 	for y in range(-1, 2):
 		for x in range(-1, 2):
-			for set: Dictionary in world.point_sets("trees", Vector3i(x, y, 0)):
-				var transforms: PackedFloat32Array = set["transforms"]
-				for i in range(0, transforms.size(), 12):
-					var at := Vector3(transforms[i + 3], 0, transforms[i + 11])
-					var along := clampf(at.x, STROKE[0].x, STROKE[1].x)
-					if Vector2(at.x - along, at.z - STROKE[0].z).length() < radius:
-						count += 1
+			count += _trees_near_in(Vector3i(x, y, 0), radius)
+	return count
+
+## How many of a chunk's trees stand within `radius` of the stroke.
+func _trees_near_in(chunk: Vector3i, radius: float) -> int:
+	var count := 0
+	for set: Dictionary in world.point_sets("trees", chunk):
+		var transforms: PackedFloat32Array = set["transforms"]
+		for i in range(0, transforms.size(), 12):
+			var at := Vector3(transforms[i + 3], 0, transforms[i + 11])
+			var along := clampf(at.x, STROKE[0].x, STROKE[1].x)
+			if Vector2(at.x - along, at.z - STROKE[0].z).length() < radius:
+				count += 1
 	return count
 
 func _process(_delta: float) -> bool:
@@ -100,14 +106,20 @@ func _process(_delta: float) -> bool:
 			if world.paint({"brush": "nothing"}, PackedVector3Array(STROKE)):
 				_fail("a brush that names no brush was taken")
 				return true
+			# Every chunk with a tree near the stroke is generated again: the check waits for each
+			# to arrive, since while it is being generated it holds no trees at all.
+			var reached: Array[Vector3i] = []
+			for y in range(-1, 2):
+				for x in range(-1, 2):
+					if _trees_near_in(Vector3i(x, y, 0), 3.0 * CELL.x) > 0:
+						reached.append(Vector3i(x, y, 0))
 			# Removed first: a raise regenerates the trees, and a stroke paints on what the node
 			# holds when it is painted.
 			if not world.paint({"brush": "remove", "stages": PackedStringArray(["trees"]), "radius": 3.0}, PackedVector3Array(STROKE)):
 				_fail("the remove stroke was refused")
 				return true
-			# The stroke lies in chunk 0 0: wait for it to arrive again, since while it is being
-			# generated it holds no trees at all.
-			ready.erase(["trees", Vector3i.ZERO])
+			for chunk in reached:
+				ready.erase(["trees", chunk])
 			phase = "removed"
 			started_usec = Time.get_ticks_usec()
 			return false

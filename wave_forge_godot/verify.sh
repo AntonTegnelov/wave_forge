@@ -52,52 +52,66 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Each run of Godot gets at most this many seconds. A script error in a SceneTree script's
+# `_initialize`, or a wait that never ends, leaves headless Godot running; the limit fails it by
+# name instead of holding the job until CI gives up on it.
+limit_s="${VERIFY_TIMEOUT_S:-600}"
+# Runs Godot with the given arguments under the limit, naming `$1`, the run, if it hits it.
+godot_run() {
+	local name="$1" status=0
+	shift
+	timeout --kill-after=10 "$limit_s" "${GODOT:-godot}" "$@" || status=$?
+	if ((status == 124 || status == 137)); then
+		echo "verify: $name did not finish within $limit_s s" >&2
+	fi
+	return "$status"
+}
 "$here/prepare.sh" "${1:-debug}"
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_follow.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_stages.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_signals.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_tables.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_decals.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_continent_kits.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_painted.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_noise.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_edits.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_frozen.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_assemble.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_scenes.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_variants.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_cave_scenes.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_pooling.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_ground.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_water.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_ambience.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_far.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_volume.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_bake.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_import.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_params.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_pack_data.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_stack.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_paint.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_candidates.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_world.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_continent.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_run_exit.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_inspector.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_typed_maps.gd
+godot_run verify.gd --headless --path "$here/godot" --script verify.gd
+godot_run verify_follow.gd --headless --path "$here/godot" --script verify_follow.gd
+godot_run verify_stages.gd --headless --path "$here/godot" --script verify_stages.gd
+godot_run verify_signals.gd --headless --path "$here/godot" --script verify_signals.gd
+godot_run verify_tables.gd --headless --path "$here/godot" --script verify_tables.gd
+godot_run verify_decals.gd --headless --path "$here/godot" --script verify_decals.gd
+godot_run verify_continent_kits.gd --headless --path "$here/godot" --script verify_continent_kits.gd
+godot_run verify_painted.gd --headless --path "$here/godot" --script verify_painted.gd
+godot_run verify_noise.gd --headless --path "$here/godot" --script verify_noise.gd
+godot_run verify_edits.gd --headless --path "$here/godot" --script verify_edits.gd
+godot_run verify_frozen.gd --headless --path "$here/godot" --script verify_frozen.gd
+godot_run verify_assemble.gd --headless --path "$here/godot" --script verify_assemble.gd
+godot_run verify_scenes.gd --headless --path "$here/godot" --script verify_scenes.gd
+godot_run verify_variants.gd --headless --path "$here/godot" --script verify_variants.gd
+godot_run verify_cave_scenes.gd --headless --path "$here/godot" --script verify_cave_scenes.gd
+godot_run verify_pooling.gd --headless --path "$here/godot" --script verify_pooling.gd
+godot_run verify_ground.gd --headless --path "$here/godot" --script verify_ground.gd
+godot_run verify_water.gd --headless --path "$here/godot" --script verify_water.gd
+godot_run verify_ambience.gd --headless --path "$here/godot" --script verify_ambience.gd
+godot_run verify_far.gd --headless --path "$here/godot" --script verify_far.gd
+godot_run verify_volume.gd --headless --path "$here/godot" --script verify_volume.gd
+godot_run verify_bake.gd --headless --path "$here/godot" --script verify_bake.gd
+godot_run verify_import.gd --headless --path "$here/godot" --script verify_import.gd
+godot_run verify_params.gd --headless --path "$here/godot" --script verify_params.gd
+godot_run verify_pack_data.gd --headless --path "$here/godot" --script verify_pack_data.gd
+godot_run verify_stack.gd --headless --path "$here/godot" --script verify_stack.gd
+godot_run verify_paint.gd --headless --path "$here/godot" --script verify_paint.gd
+godot_run verify_candidates.gd --headless --path "$here/godot" --script verify_candidates.gd
+godot_run verify_world.gd --headless --path "$here/godot" --script verify_world.gd
+godot_run verify_continent.gd --headless --path "$here/godot" --script verify_continent.gd
+godot_run verify_run_exit.gd --headless --path "$here/godot" --script verify_run_exit.gd
+godot_run verify_inspector.gd --headless --path "$here/godot" --script verify_inspector.gd
+godot_run verify_typed_maps.gd --headless --path "$here/godot" --script verify_typed_maps.gd
 # N1: a preset's first play, and walking it, print no error and no warning; the device's own
 # notices aside. So do many scenes bound by path loading at once (#465).
 for script in verify_presets.gd verify_walk.gd verify_demo.gd verify_scene_paths.gd; do
 	log="$(mktemp)"
-	"${GODOT:-godot}" --headless --path "$here/godot" --script "$script" 2>&1 | tee "$log"
+	godot_run "$script" --headless --path "$here/godot" --script "$script" 2>&1 | tee "$log"
 	if grep -E "^(ERROR|WARNING|SCRIPT ERROR)" "$log" | grep -v -E "dzn is not a conformant|XDG_RUNTIME_DIR"; then
 		echo "verify: $script printed an error or a warning" >&2
 		exit 1
 	fi
 done
 editor_log="$(mktemp)"
-"${GODOT:-godot}" --headless --editor --path "$here/godot" --quit-after 300 >"$editor_log" 2>&1
+godot_run "the editor" --headless --editor --path "$here/godot" --quit-after 300 >"$editor_log" 2>&1
 if grep -E "SCRIPT ERROR|Failed to load script|verify_plugin" "$editor_log" | grep -v "^verify_plugin: the dock"; then
 	echo "verify: the editor plugin does not load, or its dock or shortcuts are wrong" >&2
 	exit 1
@@ -107,11 +121,11 @@ if ! grep -q "^verify_plugin: the dock" "$editor_log"; then
 	exit 1
 fi
 echo "verify: the editor loads the plugin without a script error, its dock an EditorDock with shortcuts"
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_sound.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_names.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_occlusion.gd
-"${GODOT:-godot}" --headless --path "$here/godot" --script verify_proxies.gd
+godot_run verify_sound.gd --headless --path "$here/godot" --script verify_sound.gd
+godot_run verify_names.gd --headless --path "$here/godot" --script verify_names.gd
+godot_run verify_occlusion.gd --headless --path "$here/godot" --script verify_occlusion.gd
+godot_run verify_proxies.gd --headless --path "$here/godot" --script verify_proxies.gd
 "$here/../examples/history/prepare.sh" "${1:-debug}"
-"${GODOT:-godot}" --headless --path "$here/../examples/history" --script check.gd
+godot_run "the history example's check" --headless --path "$here/../examples/history" --script check.gd
 "$here/../examples/new_world/prepare.sh" "${1:-debug}"
-exec "${GODOT:-godot}" --headless --path "$here/../examples/new_world" --script check.gd
+godot_run "the new world's check" --headless --path "$here/../examples/new_world" --script check.gd

@@ -10,9 +10,9 @@ extends SceneTree
 const EDITED := "user://verify_pack_data.world.ron"
 
 func _initialize() -> void:
-	var problem: String = _check()
+	var problem = _check()
 	if problem != "ok":
-		printerr("verify_pack_data: " + problem)
+		printerr("verify_pack_data: %s" % [problem])
 		quit(1)
 		return
 	quit(0)

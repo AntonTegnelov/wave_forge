@@ -15,6 +15,8 @@ var stages: Node
 var chunk := Vector3i.ZERO
 var started_usec := 0
 var followed := false
+## The first settlement's row id.
+var first_id := PackedInt64Array()
 
 func _initialize() -> void:
 	scene = (load("res://continent.tscn") as PackedScene).instantiate()
@@ -45,6 +47,7 @@ func _process(_delta: float) -> bool:
 		if first["culture"] != CULTURE:
 			_fail("the first settlement is of %s, not %s" % [first["culture"], CULTURE])
 			return true
+		first_id = first["id"]
 		var at := Vector3(first["x"] * 2.0, 0.0, first["y"] * 2.0)
 		chunk = Vector3i(floori(first["x"] / 8.0), floori(first["y"] / 8.0), 0)
 		stages.follow(at)
@@ -57,6 +60,9 @@ func _process(_delta: float) -> bool:
 	if town["rules"] != CULTURE:
 		_fail("the town of %s is of %s, not %s" % [chunk, town["rules"], CULTURE])
 		return true
+	if town.get("row") != first_id:
+		_fail("the town of %s stands on the site of %s, not of the settlement %s" % [chunk, town.get("row", town.get("region")), first_id])
+		return true
 	var modules := _module_names("res://continent/cultures/%s.ron" % CULTURE)
 	var placed := 0
 	for placements: Dictionary in stages.town_instance_sets("towns", chunk, PackedStringArray()):
@@ -64,7 +70,10 @@ func _process(_delta: float) -> bool:
 			_fail("the town places %s, which the %s do not have" % [placements["name"], CULTURE])
 			return true
 		placed += placements["ids"].size()
-	print("verify_continent: the first settlement's town arrived after %.1f s, of the %s's module set, %d modules placed in its chunk" % [(Time.get_ticks_usec() - started_usec) / 1e6, CULTURE, placed])
+	if placed == 0:
+		_fail("the town of %s places no module" % chunk)
+		return true
+	print("verify_continent: the first settlement's town arrived on its site after %.1f s, of the %s's module set, %d modules placed in its chunk" % [(Time.get_ticks_usec() - started_usec) / 1e6, CULTURE, placed])
 	quit(0)
 	return true
 

@@ -27,6 +27,8 @@ var progressed := 0
 var finished := []
 var first_stages := {}
 var navigable_usec := -1
+## The chunks whose trees each of the player and the generator has, by [node, chunk].
+var trees_ready := {}
 var panel: Node
 
 func _initialize() -> void:
@@ -132,6 +134,10 @@ func _process(_delta: float) -> bool:
 			if not player.start() or not generator.start() or not generator.update_params({"density": DENSITY}):
 				_fail("the player or the generator did not start")
 				return true
+			for node: Node in [player, generator]:
+				node.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void:
+					if stage == "trees":
+						trees_ready[[node, chunk]] = true)
 			player.follow(Vector3(2 * CELLS + 1, 0, 2 * CELLS + 1))
 			generator.follow(Vector3(2 * CELLS + 1, 0, 2 * CELLS + 1))
 			phase = "play"
@@ -140,7 +146,7 @@ func _process(_delta: float) -> bool:
 			for chunk in _area():
 				if not player.ground_chunks().has(chunk) or not generator.ground_chunks().has(chunk):
 					return false
-				if player.point_sets("trees", chunk).is_empty() and generator.point_sets("trees", chunk).size() > 0:
+				if not trees_ready.has([player, chunk]) or not trees_ready.has([generator, chunk]):
 					return false
 			for chunk in _area():
 				if player.field_values("height", chunk) != generator.field_values("height", chunk):
