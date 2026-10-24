@@ -551,6 +551,8 @@ impl<S: Solver> WorldGenerator<S> {
         self.failed.remove(&coord);
         self.repaired.remove(&coord);
         self.replays.remove(&coord);
+        // A repair queued for the chunk would rewrite what was imported.
+        self.repairs.remove(&coord);
         self.layers.born(coord, None);
         self.events.push(ChunkEvent::Updated(coord));
         Ok(())
