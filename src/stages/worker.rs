@@ -477,7 +477,6 @@ impl Drop for StageWorker {
     }
 }
 
-/// The thread: build, then alternate between taking orders and a step of generation.
 /// The playback thread of [`StageWorker::play`]: each request's chunks of its targets from the
 /// store, those no longer asked for dropped.
 fn play(
@@ -604,6 +603,7 @@ fn play(
     }
 }
 
+/// The thread: build, then alternate between taking orders and a step of generation.
 fn run<B>(build: B, orders: &Receiver<Order>, reports: &Sender<Report>)
 where
     B: FnOnce() -> Result<Runtime, String>,
