@@ -20,6 +20,8 @@ var phase := ""
 var stages: Node
 ## The settlements of the world's history.
 var history: Array = []
+## How long the history took to run, in seconds, when the game ran it rather than loading it.
+var history_s := -1.0
 
 @onready var status: Label = $Screen/Panel/Margin/Box/Status
 @onready var progress: ProgressBar = $Screen/Panel/Margin/Box/Progress
@@ -54,7 +56,9 @@ func _generate() -> void:
 		return
 	history = _load_history()
 	if history.is_empty():
+		var started := Time.get_ticks_usec()
 		history = HISTORY.new().run(stages, stages.seed)
+		history_s = (Time.get_ticks_usec() - started) / 1e6
 		if history.is_empty():
 			_fail("the history founded no settlement, so there is no world to play")
 			return
