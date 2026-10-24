@@ -30,9 +30,11 @@
 //! [`NoiseConfig`] has the properties of Godot's `FastNoiseLite` resource, with the same names
 //! and defaults, so a noise tuned in Godot's inspector reads the same in a pack.
 //! [`NoiseConfig::sample`] and [`NoiseConfig::sample_3d`] equal Godot 4.7's
-//! `FastNoiseLite.get_noise_2d` and `get_noise_3d` for the same properties: they do the same `f32`
-//! operations in the same order, with the same wrapping integer hashes, and `tests/fastnoise.rs`
-//! holds them to values Godot itself computed.
+//! `FastNoiseLite.get_noise_2d` and `get_noise_3d` for the same properties, as its x86_64 build
+//! computes them: they do the same `f32` operations in the same order, with the same wrapping
+//! integer hashes, and `tests/fastnoise.rs` holds them to values Godot itself computed. The port
+//! gives the same bits on every platform; a Godot build that fuses multiply-adds, as arm64 builds
+//! may, can differ from it in the last bits.
 //!
 //! FastNoiseLite is Copyright (c) 2023 Jordan Peck and contributors, and Godot's resource is
 //! Copyright (c) 2014-present Godot Engine contributors; both are MIT licensed, and the notice is
