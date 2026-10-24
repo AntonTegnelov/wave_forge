@@ -175,7 +175,8 @@ func _material(source: Material, files: Dictionary, plant: bool, height: float) 
 	return material
 
 ## The kit's texture of `name` from the file `file`, shrunk and compressed into a resource of its
-## own, written once. Null if the file cannot be read.
+## own, written once. Null if the file cannot be read or the resource cannot be written, which the
+## run fails on with the path.
 func _texture(file: String, name: String) -> Texture2D:
 	if textures.has(name):
 		return textures[name]
@@ -189,7 +190,10 @@ func _texture(file: String, name: String) -> Texture2D:
 	var texture := PortableCompressedTexture2D.new()
 	texture.create_from_image(image, PortableCompressedTexture2D.COMPRESSION_MODE_LOSSLESS)
 	var path := OUT.path_join("textures").path_join(name.to_snake_case() + ".res")
-	ResourceSaver.save(texture, path)
+	var saved := ResourceSaver.save(texture, path)
+	if saved != OK:
+		_fail("%s could not be written: %s" % [path, error_string(saved)])
+		return null
 	textures[name] = load(path)
 	return textures[name]
 

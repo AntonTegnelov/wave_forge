@@ -82,8 +82,9 @@ func _city_middle() -> Variant:
 				for x in range(low.x, high.x):
 					if not navigable.has(Vector3i(x, y, 0)):
 						return null
-			var chunk_size: Vector3 = Vector3(stages.chunk_cells) * stages.cell_size
-			return Vector2(low + high) * 0.5 * Vector2(chunk_size.x, chunk_size.z)
+			# The lattice's x and y run along Godot's x and z.
+			var chunk_size := Vector2(stages.chunk_cells.x * stages.cell_size.x, stages.chunk_cells.y * stages.cell_size.z)
+			return Vector2(low + high) * 0.5 * chunk_size
 	return null
 
 func _process(_delta: float) -> bool:

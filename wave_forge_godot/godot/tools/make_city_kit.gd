@@ -20,14 +20,22 @@ func _initialize() -> void:
 		if mesh == null:
 			continue
 		var path := KIT.path_join(module)
-		ResourceSaver.save(mesh, path + ".tres")
+		var saved := ResourceSaver.save(mesh, path + ".tres")
+		if saved != OK:
+			printerr("make_city_kit: %s.tres could not be written: %s" % [path, error_string(saved)])
+			quit(1)
+			return
 		var instance := MeshInstance3D.new()
 		instance.name = module
 		instance.mesh = load(path + ".tres")
 		var scene := PackedScene.new()
 		scene.pack(instance)
-		ResourceSaver.save(scene, path + ".tscn")
 		instance.free()
+		saved = ResourceSaver.save(scene, path + ".tscn")
+		if saved != OK:
+			printerr("make_city_kit: %s.tscn could not be written: %s" % [path, error_string(saved)])
+			quit(1)
+			return
 		written += 1
 	print("make_city_kit: wrote %d modules to %s" % [written, KIT])
 	quit()

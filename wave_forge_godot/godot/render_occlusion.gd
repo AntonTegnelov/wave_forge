@@ -209,7 +209,7 @@ func _process(_delta: float) -> bool:
 		world.occluder_radius = -1
 		for y in range(-OCCLUDER_RADIUS, OCCLUDER_RADIUS + 1):
 			for x in range(-OCCLUDER_RADIUS, OCCLUDER_RADIUS + 1):
-				var chunk := Vector3i(1 + x, 1 + y, 0)
+				var chunk := Vector3i(x, y, 0)
 				churned.append(chunk)
 				churn_nodes[chunk] = _occluder(chunk)
 				root.add_child(churn_nodes[chunk])

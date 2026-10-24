@@ -7,7 +7,8 @@
 ## preset has it, which is what the editor's preview of the preset generates. Once everything has
 ## generated it changes each of the preset's parameters five times, between
 ## two values in its range, through `update_params`, as the inspector's sliders do. A change is
-## shown when every chunk it dropped has arrived again and no ground waits to be built. It prints
+## shown when every chunk it dropped has arrived again and nothing it changed waits to be drawn: no
+## ground, volume or far ground to build and no placement to make. It prints
 ## one line per parameter of `key=value` fields: whether the far ground was there, the parameter, the
 ## chunks a change dropped, and the
 ## milliseconds until it was shown at the median and at most; appended to `--out` as well when it
@@ -92,14 +93,14 @@ func _process(_delta: float) -> bool:
 		return true
 	if changed_usec == 0:
 		var stats: Dictionary = stages.stats()
-		if not Generated.all_generated(stages, stats, last) or stats["pending_grounds"] > 0:
+		if not Generated.all_generated(stages, stats, last) or _drawing(stats):
 			settled = 0
 			return false
 		settled += 1
 		if settled < SETTLE:
 			return false
 		return _change()
-	if dropped.is_empty() or stages.stats()["pending_grounds"] > 0:
+	if dropped.is_empty() or _drawing(stages.stats()):
 		return false
 	for key: Array in dropped:
 		if not arrived.has(key):
@@ -107,6 +108,10 @@ func _process(_delta: float) -> bool:
 	timings[param].append((now - changed_usec) / 1000.0)
 	timings[param + " dropped"] = dropped.size()
 	return _change()
+
+## Whether anything that has arrived waits to be drawn.
+func _drawing(stats: Dictionary) -> bool:
+	return stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_far_grounds"] > 0 or stats["pending_placements"] > 0
 
 ## Makes the next change, or reports and quits after the last; returns whether the run is over.
 func _change() -> bool:

@@ -467,7 +467,7 @@ engines make that impossible or pointless:
 ## Open questions
 
 Left open by the research and answered since: the cost of rebuilding occluders while streaming
-([measurements.md](../research/measurements.md) E50), vertex-shader grass on Compatibility (E45),
+([measurements.md](../research/measurements.md) E50, E80), vertex-shader grass on Compatibility (E45),
 and one key scheme for localisation catalogues, `wf-<category>-<token>`
 ([packs.md](../reference/packs.md#locations)), and grass on Forward+ (D16, D17). Still open: the best hook for writes on
 Godot's main `RenderingDevice`, and Bevy's occlusion culling on Direct3D 12 and Metal in 0.20.

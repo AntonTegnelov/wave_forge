@@ -6,7 +6,10 @@
 ## After `--seconds` (default 15) it prints one line of `key=value` fields: the label, how many
 ## frames there were, the first frame's time, the slowest frame and when it came, how many frames
 ## took over 33 ms, the first 120 frames' total, and when the ground arrived under the camera; all
-## times in milliseconds but `ground_s`. It appends the line to `--out` too when given, then quits.
+## times in milliseconds but `ground_s`. A frame's time runs from one process to the next, which
+## holds the draw between them; Godot processes before it draws, so the first frame runs from the
+## first process to the second, holding the first draw. It appends the line to `--out` too when
+## given, then quits.
 extends Node
 
 const SLOW_MS := 33.0
@@ -42,11 +45,11 @@ func _ready() -> void:
 	stages = demo.get_node("Hills")
 	camera = demo.get_node("Camera")
 	started_usec = Time.get_ticks_usec()
-	last_usec = started_usec
 
 func _process(_delta: float) -> void:
 	var now := Time.get_ticks_usec()
-	frames.append((now - last_usec) / 1000.0)
+	if last_usec > 0:
+		frames.append((now - last_usec) / 1000.0)
 	last_usec = now
 	if ground_s < 0.0:
 		var under := Vector3(camera.global_position.x, 0, camera.global_position.z)

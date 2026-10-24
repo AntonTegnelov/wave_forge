@@ -158,11 +158,11 @@ again when its tiles change, and frees it when the chunk leaves the radius. Godo
 culling uses them once the viewport's `use_occlusion_culling` is on.
 
 Whether they pay depends on the view and on how the game draws
-([measurements.md](../research/measurements.md) E50). From a street they hid half of what the
+([measurements.md](../research/measurements.md) E50, E80). From a street they hid half of what the
 city draws and saved several milliseconds; from above the roofs they hid under 1%, because a
 chunk's MultiMesh of a module is culled only when all of it is hidden, and culling cost more than it
-saved. Rebuilding three chunks' occluders costs Godot a millisecond or more on the frames after the
-player crosses into a chunk. `occluder_radius` is below zero until a game turns it on.
+saved. Rebuilding three chunks' occluders costs Godot one to several milliseconds on the frames
+after the player crosses into a chunk, about 4 ms from above the roofs (E80). `occluder_radius` is below zero until a game turns it on.
 
 ### Far proxies
 
