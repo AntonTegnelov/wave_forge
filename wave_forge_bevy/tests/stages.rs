@@ -1001,13 +1001,18 @@ fn a_new_painting_drops_the_stages_that_read_it_and_regenerates_them() {
 fn a_target_with_a_radius_of_its_own_reaches_past_the_focus() {
     let mut app = app_with(plugin().with_radius("height", 3));
 
+    // Stages generate in the pack's order, cover last, so once cover has the focus's whole ring
+    // every trees chunk a radius would give has had its turn.
     run_until(&mut app, |app| {
         let stages = app.world().resource::<WaveForgeStages>();
         stages.field("height", ChunkCoord::new(3, 0, 0)).is_some()
-            && stages.points("trees", ChunkCoord::new(1, 0, 0)).is_some()
+            && around_origin()
+                .into_iter()
+                .all(|chunk| stages.categories("cover", chunk).is_some())
     });
 
     let stages = app.world().resource::<WaveForgeStages>();
+    assert!(stages.points("trees", ChunkCoord::new(1, 0, 0)).is_some());
     assert!(stages.points("trees", ChunkCoord::new(2, 0, 0)).is_none());
     assert!(stages.field("height", ChunkCoord::new(4, 0, 0)).is_none());
 }
