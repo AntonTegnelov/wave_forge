@@ -3248,6 +3248,8 @@ impl Runtime {
         };
         let input = self.pack.index(height).expect("linked when loaded");
         let ratio = self.pack.stages[input].scale / stage.scale;
+        // A Connected stage reads categories, which take the covering column's, as generation does.
+        let categorical = self.pack.stages[input].kind.output() == Output::Categories;
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
         let side = i64::from(size);
         let min = [
@@ -3260,9 +3262,13 @@ impl Runtime {
             // column of every stage it reads.
             let memo = RefCell::new(HashMap::new());
             for x in 0..side * sx {
-                heights.push(between(ratio, false, min[0] + x, min[1] + y, |x, y| {
-                    self.sample_column(input, [x, y], &memo)
-                })?);
+                heights.push(between(
+                    ratio,
+                    categorical,
+                    min[0] + x,
+                    min[1] + y,
+                    |x, y| self.sample_column(input, [x, y], &memo),
+                )?);
             }
         }
         let field: Arc<[f32]> = Arc::from(self.region_field(index, region, &heights));

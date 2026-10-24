@@ -173,3 +173,33 @@ fn sampling_gives_the_ids_the_chunks_hold() {
         assert_eq!(id, columns[&column].1, "{column:?}");
     }
 }
+
+#[test]
+fn sampling_over_coarser_categories_gives_the_ids_the_chunks_hold() {
+    let coarse = PACK
+        .replace(
+            r#"(name: "ground", kind"#,
+            r#"(name: "ground", scale: 2, kind"#,
+        )
+        .replace(r#"(name: "land", kind"#, r#"(name: "land", scale: 2, kind"#);
+    let pack = Arc::new(Pack::parse(&coarse).expect("a valid pack"));
+    let mut generated = Runtime::new(Arc::clone(&pack), 6, SIZE);
+    let focus: Vec<FocusPoint> = area().iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    generated.request(&focus, &["areas"]).expect("the stages");
+    generated.run_until_idle().expect("the stages run");
+
+    let sampled = Runtime::new(pack, 6, SIZE)
+        .atlas("areas", [-32, -32], [64, 64])
+        .expect("a sampled stage");
+
+    for (i, id) in sampled.into_iter().enumerate() {
+        let (x, y) = (-32 + (i % 64) as i32, -32 + (i / 64) as i32);
+        let chunk = ChunkCoord::new(x.div_euclid(8), y.div_euclid(8), 0);
+        let held = generated.field("areas", chunk).expect("generated");
+        assert_eq!(
+            id,
+            held.get(x.rem_euclid(8) as u32, y.rem_euclid(8) as u32),
+            "{x}, {y}"
+        );
+    }
+}
