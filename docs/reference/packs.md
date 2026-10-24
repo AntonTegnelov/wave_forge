@@ -1251,7 +1251,7 @@ cell, times its speed and its water, which evaporates as it runs. A slope is mea
 coarse stage ([Levels](#levels)) drains its world map as a fine one would its columns.
 
 A droplet that leaves its region stops, and the worn field fades into the input over `fade` columns
-(default 16) from the region's edges, so regions never read each other, the field meets its input
+(default 16, and at least 1) from the region's edges, so regions never read each other, the field meets its input
 along every region border, and chunks are the same in any order and in every run. A region is
 drained when its first chunk is generated, from its whole height field, so it suits a coarse stage
 over a finite world best: the continent drains its 512 by 512 columns at scale 4 as one region
@@ -1279,10 +1279,10 @@ diagonal's length for a diagonal neighbour), it sheds `rate` (default 0.5) of ha
 excess to the lower ones, shared by how far each lies below; `passes` (default 100) passes run, each
 working out every column's shedding from the field as the pass found it and applying all of it at
 once, so the result is the same in any order. A slope is measured in cells, as a Droplets stage's
-is. The change fades into the input over `fade` columns (default 16) from the region's edges, so
-regions never read each other, the field meets its input along every region border, and chunks are
-the same in any order and in every run. Loading refuses a region or passes of 0, a negative slope,
-and a rate beyond 0 to 1.
+is. The change fades into the input over `fade` columns (default 16, and at least 1) from the
+region's edges, so regions never read each other, the field meets its input along every region border, and chunks are
+the same in any order and in every run. Loading refuses a region, passes or a fade of 0, a negative
+slope, and a rate beyond 0 to 1.
 
 Enough passes bring ground to rest at `slope` everywhere, cliffs included. To keep a cliff's face
 and gather the debris at its foot, as the canyon preset does, the ground is the higher of the rock

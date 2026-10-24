@@ -185,3 +185,13 @@ fn a_cycle_of_tables_is_blamed_on_a_table_in_the_cycle() {
         "{result:?}"
     );
 }
+
+#[test]
+fn a_region_stage_that_does_not_fade_to_its_borders_is_refused() {
+    let worn = pack(r#"(name: "worn", kind: Droplets(height: "ground", region: 4, fade: 0)),"#);
+    let shed =
+        pack(r#"(name: "shed", kind: Talus(height: "ground", region: 4, slope: 0.8, fade: 0)),"#);
+
+    assert!(refusal(worn, "worn").contains("fade"));
+    assert!(refusal(shed, "shed").contains("fade"));
+}
