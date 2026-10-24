@@ -1566,8 +1566,7 @@ impl Runtime {
         };
         self.solved
             .retain(|&(stage, _), (site, _)| fresh(stage, site));
-        self.solving
-            .retain(|&(stage, _), (_, site)| fresh(stage, site));
+        self.keep_solving(|stage, site| fresh(stage, site));
         self.assembled
             .retain(|&(stage, _), (site, _)| fresh(stage, site));
         let pack = Arc::clone(&self.pack);
@@ -2291,8 +2290,7 @@ impl Runtime {
         };
         self.solved
             .retain(|&(stage, _), (site, _)| covered(stage, site));
-        self.solving
-            .retain(|&(stage, _), (_, site)| covered(stage, site));
+        self.keep_solving(|stage, site| covered(stage, site));
         self.assembled
             .retain(|&(stage, _), (site, _)| covered(stage, site));
         // A bounded world has few regions, so it keeps every one it has computed, as a finite
@@ -4065,6 +4063,22 @@ impl Runtime {
         self.solving
             .insert((index, site.id.clone()), (self.ticket, site));
         Ok(())
+    }
+
+    /// Keeps the towns being solved whose stage and site `keep` holds to, and tells the town
+    /// thread to skip the others.
+    fn keep_solving(&mut self, keep: impl Fn(usize, &Site) -> bool) {
+        let mut forgotten: Vec<u64> = Vec::new();
+        self.solving.retain(|&(stage, _), (ticket, site)| {
+            let kept = keep(stage, site);
+            if !kept {
+                forgotten.push(*ticket);
+            }
+            kept
+        });
+        if let Some(towns) = &self.towns {
+            towns.forget(forgotten);
+        }
     }
 
     /// Whether `chunk` of stage `index` lies in a site whose town is not back from the town

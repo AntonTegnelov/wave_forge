@@ -1,5 +1,6 @@
 //! Solve stages: a town per site, solved whole, the same whatever order its chunks are asked for in,
-//! on a thread of their own while other stages generate, whose solver is gone once the runtime is.
+//! on a thread of their own while other stages generate, whose solver is gone once the runtime is,
+//! without solving the towns still queued.
 //!
 //! These run on the CPU reference solver with a small module set of ground and air, so they need no
 //! GPU; the city on a GPU is checked in `wfc-devtools`.
@@ -7,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 use wave_forge::loader::parse_rule_file;
@@ -252,6 +253,50 @@ impl Drop for SlowToDrop {
         std::thread::sleep(Duration::from_millis(100));
         self.dropped.store(true, Ordering::SeqCst);
     }
+}
+
+/// A town solver that takes a while over each town and counts them.
+struct Slow {
+    solved: Arc<AtomicUsize>,
+}
+
+impl TownSolver for Slow {
+    fn chunk_shape(&self) -> ChunkShape {
+        CHUNK
+    }
+
+    fn solve(&mut self, request: &TownRequest<'_>) -> Result<Town, TownError> {
+        std::thread::sleep(Duration::from_millis(50));
+        self.solved.fetch_add(1, Ordering::SeqCst);
+        let (w, h) = request.size;
+        let cells = (CHUNK.x * CHUNK.y * CHUNK.z) as usize;
+        Ok(Town {
+            size: request.size,
+            chunks: vec![Arc::from(vec![0u16; cells]); (w * h) as usize],
+        })
+    }
+}
+
+#[test]
+fn a_dropped_runtime_solves_none_of_the_towns_still_queued() {
+    let solved = Arc::new(AtomicUsize::new(0));
+    let mut runtime = Runtime::new(
+        Arc::new(Pack::parse(PACK).expect("a valid pack")),
+        5,
+        [CHUNK.x, CHUNK.y],
+    )
+    .with_towns(Box::new(Slow {
+        solved: Arc::clone(&solved),
+    }))
+    .expect("matching chunks");
+    let focus: Vec<FocusPoint> = area().into_iter().map(|c| FocusPoint::new(c, 0)).collect();
+    runtime.request(&focus, &["buildings"]).expect("stages");
+    // The area holds a site in each of its four regions, so four towns are sent.
+    runtime.step(usize::MAX).expect("the stages run");
+
+    drop(runtime);
+
+    assert!(solved.load(Ordering::SeqCst) <= 1, "{solved:?} solved");
 }
 
 // A process may end as soon as its runtime is dropped, and a device still being torn down on
