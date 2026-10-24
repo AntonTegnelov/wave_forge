@@ -338,6 +338,12 @@ fn given_rows(schema: &Schema, rows: Vec<GivenRow>) -> Result<Table, StageError>
                 .ok_or_else(|| failed(format!("row {} gives no {name:?}", row.id)))?;
             values.push(match (column, value) {
                 (Column::Number, Value::Number(number)) if number.is_finite() => *number,
+                (Column::Number, Value::Number(number)) => {
+                    return Err(failed(format!(
+                        "row {} gives {name:?} as {number}, which is not a finite number",
+                        row.id
+                    )));
+                }
                 (Column::Names(names), Value::Name(given)) => {
                     let at = names
                         .iter()

@@ -181,6 +181,18 @@ fn a_given_row_is_checked_against_its_columns_and_nothing_changes_on_an_error() 
     assert_eq!(table(&facts, "villages").rows.len(), 1);
 }
 
+#[test]
+fn a_number_that_is_not_finite_is_refused_as_such() {
+    let mut facts = Facts::new(pack(), 3).expect("facts");
+
+    let refusal = facts.give("villages", vec![village(2, f32::INFINITY, "hill")]);
+
+    assert!(
+        matches!(&refusal, Err(StageError::Table { message, .. }) if message.contains("not a finite number")),
+        "{refusal:?}"
+    );
+}
+
 /// Every value of `stage` in the chunks around the origin.
 fn generated(runtime: &mut Runtime, stage: &str) -> Vec<f32> {
     runtime
