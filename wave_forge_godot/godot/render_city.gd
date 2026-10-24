@@ -121,6 +121,8 @@ func _place_server(chunk: Vector3i) -> void:
 	var sets: Array = world.instance_sets(chunk, drawn_names)
 	var handing := Time.get_ticks_usec()
 	ask_ms.append((handing - asked) / 1000.0)
+	# How many instances of this chunk the layout check compared, or -1 once one was out of place.
+	var compared := 0
 	for set: Dictionary in sets:
 		var multimesh := RenderingServer.multimesh_create()
 		var transforms: PackedFloat32Array = set["transforms"]
@@ -130,20 +132,23 @@ func _place_server(chunk: Vector3i) -> void:
 		var instance := RenderingServer.instance_create2(multimesh, scenario)
 		rids.append(instance)
 		rids.append(multimesh)
-		if not checked_layout:
-			_check_layout(chunk, multimesh, set)
+		if not checked_layout and compared >= 0:
+			var checked := _check_layout(chunk, multimesh, set)
+			compared = -1 if checked < 0 else compared + checked
 	hand_ms.append((Time.get_ticks_usec() - handing) / 1000.0)
-	if checked_layout == false:
+	# The first chunk with instances is checked; a failed check has already quit.
+	if not checked_layout and compared > 0:
 		checked_layout = true
-		print("render_city: every instance of chunk %s sits where tile_basis and cell_position say" % chunk)
+		print("render_city: every instance of chunk %s, %d of them, sits where tile_basis and cell_position say" % [chunk, compared])
 	if server_rids.has(chunk):
 		for rid: RID in server_rids[chunk]:
 			RenderingServer.free_rid(rid)
 	server_rids[chunk] = rids
 	placed[chunk] = true
 
-## The multimesh's instances, read back from the renderer, are where the tile catalogue says.
-func _check_layout(chunk: Vector3i, multimesh: RID, set: Dictionary) -> void:
+## The multimesh's instances, read back from the renderer, are where the tile catalogue says; returns
+## how many it compared, or -1 when one is elsewhere.
+func _check_layout(chunk: Vector3i, multimesh: RID, set: Dictionary) -> int:
 	var tiles: PackedInt32Array = world.tiles_at(chunk)
 	var ids: PackedInt64Array = set["ids"]
 	for i in ids.size():
@@ -153,7 +158,8 @@ func _check_layout(chunk: Vector3i, multimesh: RID, set: Dictionary) -> void:
 		var got := RenderingServer.multimesh_instance_get_transform(multimesh, i)
 		if not got.is_equal_approx(expected):
 			_fail("%s at cell %d is at %s, the catalogue says %s" % [set["name"], cell, got, expected])
-			return
+			return -1
+	return ids.size()
 
 ## The modules that have a model to draw.
 func _modules_with_models() -> Array:
