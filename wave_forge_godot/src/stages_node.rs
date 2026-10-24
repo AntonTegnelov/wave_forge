@@ -3789,9 +3789,9 @@ impl WaveForgeStages {
             if self.grounds.contains_key(&chunk) {
                 continue;
             }
-            let Some(mesh) = ground(chunk, |at| worker.field(&stage, at), cell) else {
-                continue;
-            };
+            // The ground's mesh is the costly part, so it is built last, once every other input
+            // has arrived, rather than built and thrown away while one is missing.
+            let mesh = || ground(chunk, |at| worker.field(&stage, at), cell);
             // The chunk's lakes and rivers, or wait for the water's field.
             let water = if water_stage.is_empty() {
                 None
@@ -3809,6 +3809,9 @@ impl WaveForgeStages {
                 Some(surface)
             };
             if self.palette.is_none() {
+                let Some(mesh) = mesh() else {
+                    continue;
+                };
                 built.push((chunk, mesh, None, water));
                 continue;
             }
@@ -3847,6 +3850,9 @@ impl WaveForgeStages {
                     Some(wetness) => wetness.iter().zip(&banks).map(|(a, b)| a.max(*b)).collect(),
                     None => banks,
                 })
+            };
+            let Some(mesh) = mesh() else {
+                continue;
             };
             built.push((
                 chunk,
@@ -4464,6 +4470,13 @@ impl WaveForgeStages {
             // Looked at now: built, or waiting for a field around it, whose arrival makes it due
             // again.
             self.far_due.remove(&chunk);
+            // The colours and the cavity have to be there before the far ground is meshed, or the
+            // mesh is thrown away and built again when they arrive.
+            if (!material.is_empty() && worker.categories(&material, chunk).is_none())
+                || (!cavity_stage.is_empty() && worker.field(&cavity_stage, chunk).is_none())
+            {
+                continue;
+            }
             let far = far_ground(
                 chunk,
                 scale as u32,
