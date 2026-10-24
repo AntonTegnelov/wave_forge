@@ -17,8 +17,10 @@ use super::save::Save;
 use crate::ChunkCoord;
 use crate::frozen::FrozenStore;
 use crate::scheduler::FocusPoint;
+use crate::worker::panic_message;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::panic::AssertUnwindSafe;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -115,7 +117,7 @@ impl StageWorker {
         // an engine drops its worker on its main thread. `finish` gives the thread to wait for.
         let thread = std::thread::Builder::new()
             .name("wave forge stages".to_owned())
-            .spawn(move || run(build, &taken, &reports))
+            .spawn(move || report_panic(&reports, || run(build, &taken, &reports)))
             .expect("a thread");
         Self {
             orders,
@@ -142,7 +144,11 @@ impl StageWorker {
         let (reports, received) = channel::<Report>();
         let thread = std::thread::Builder::new()
             .name("wave forge playback".to_owned())
-            .spawn(move || play(&pack, size, store, &taken, &reports))
+            .spawn(move || {
+                report_panic(&reports, || {
+                    play(&pack, size, store, &taken, &reports);
+                });
+            })
             .expect("a thread");
         Self {
             orders,
@@ -695,5 +701,16 @@ where
                 return;
             }
         }
+    }
+}
+
+/// Runs `body`, a worker thread's whole work, and reports a panic in it as the thread's failure: a
+/// panic is a broken invariant, and reported, the engine says why generation stopped.
+fn report_panic(reports: &Sender<Report>, body: impl FnOnce()) {
+    if let Err(payload) = std::panic::catch_unwind(AssertUnwindSafe(body)) {
+        let _ = reports.send(Report::Failed(format!(
+            "the stages thread panicked: {}",
+            panic_message(payload.as_ref())
+        )));
     }
 }

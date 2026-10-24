@@ -8,7 +8,9 @@
 use crate::generator::{ChunkEvent, GeneratorStats, WorldGenerator};
 use crate::scheduler::FocusPoint;
 use crate::{Chunk, ChunkCoord, Error, Solver};
+use std::any::Any;
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 
@@ -76,7 +78,18 @@ impl Worker {
         // Not joined when dropped: see the type's documentation.
         let thread = std::thread::Builder::new()
             .name("wave forge".to_owned())
-            .spawn(move || run(build, &orders, &reports))
+            .spawn(move || {
+                // A panic is a broken invariant; reported, the engine says why generation stopped.
+                let ran = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    run(build, &orders, &reports);
+                }));
+                if let Err(payload) = ran {
+                    let _ = reports.send(Report::Failed(format!(
+                        "the worker's thread panicked: {}",
+                        panic_message(payload.as_ref())
+                    )));
+                }
+            })
             .expect("a thread");
         Self {
             commands,
@@ -268,4 +281,15 @@ fn work<S: Solver>(world: &mut WorldGenerator<S>, reports: &Sender<Report>) -> R
         stats: Box::new(*world.stats()),
     });
     Ok(())
+}
+
+/// What a panic caught on a worker's thread said, for the failure it is reported as.
+pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "a panic with no message".to_owned()
+    }
 }
