@@ -21,6 +21,11 @@
 //! )
 //! ```
 //!
+//! A top that looks different turned has an orientation in quarter turns,
+//! `Top(connector: "stair", rotation: Some(0))`, which must line up with the face it meets; one that a
+//! half turn takes to itself, a bar through the cell's centre, adds `half_turn: true`, so its
+//! orientation counts modulo two.
+//!
 //! A module can also say what its cell is like, for sound and walking: `surface: "cobblestone"`,
 //! what walkers in the cell stand on; `indoor: true`, that the cell is inside; and
 //! `sounds: [(at: (0.5, 0.5, 0.2), key: "fountain")]`, sounds playing at points of the cell, from 0
@@ -70,6 +75,10 @@ enum FaceDef {
         /// under every rotation.
         #[serde(default)]
         rotation: Option<u8>,
+        /// Whether an oriented face looks the same after a half turn, so its rotation counts
+        /// modulo two.
+        #[serde(default)]
+        half_turn: bool,
     },
 }
 
@@ -231,9 +240,11 @@ pub fn parse_module_set(content: &str) -> Result<ModuleSet, LoadError> {
             FaceDef::Top {
                 connector,
                 rotation,
-            } => Built::Top(match rotation {
-                Some(turns) => VerticalFace::oriented(connector_id(connector), *turns),
-                None => VerticalFace::invariant(connector_id(connector)),
+                half_turn,
+            } => Built::Top(match (rotation, half_turn) {
+                (Some(turns), true) => VerticalFace::half_turn(connector_id(connector), *turns),
+                (Some(turns), false) => VerticalFace::oriented(connector_id(connector), *turns),
+                (None, _) => VerticalFace::invariant(connector_id(connector)),
             }),
         };
         faces.insert(name, built);

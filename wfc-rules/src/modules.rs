@@ -146,6 +146,9 @@ pub struct VerticalFace {
     /// `None` if the face looks the same under every rotation; otherwise its orientation in quarter
     /// turns, which must line up with the touching face after both modules are rotated.
     pub rotation: Option<u8>,
+    /// Whether the face looks the same after a half turn, a bar through the cell's centre say, so
+    /// its orientation counts modulo two.
+    pub half_turn: bool,
 }
 
 impl VerticalFace {
@@ -155,6 +158,7 @@ impl VerticalFace {
         Self {
             connector,
             rotation: None,
+            half_turn: false,
         }
     }
 
@@ -164,6 +168,31 @@ impl VerticalFace {
         Self {
             connector,
             rotation: Some(quarter_turns % 4),
+            half_turn: false,
+        }
+    }
+
+    /// A face that looks the same after a half turn but not after a quarter turn, with an
+    /// orientation of `quarter_turns` modulo 2.
+    #[must_use]
+    pub const fn half_turn(connector: u32, quarter_turns: u8) -> Self {
+        Self {
+            connector,
+            rotation: Some(quarter_turns % 2),
+            half_turn: true,
+        }
+    }
+
+    /// The face turned by `quarter_turns`.
+    #[must_use]
+    pub const fn turned(self, quarter_turns: u8) -> Self {
+        let period = if self.half_turn { 2 } else { 4 };
+        Self {
+            rotation: match self.rotation {
+                Some(rotation) => Some((rotation + quarter_turns) % period),
+                None => None,
+            },
+            ..self
         }
     }
 }
@@ -440,10 +469,7 @@ fn variant_face(prototypes: &[ModulePrototype], variant: ModuleVariant, axis: us
     let prototype = &prototypes[variant.prototype];
     match prototype.face(rotate_axis(axis, (4 - variant.rotation) % 4)) {
         Face::Horizontal(face) => Face::Horizontal(face),
-        Face::Vertical(face) => Face::Vertical(VerticalFace {
-            connector: face.connector,
-            rotation: face.rotation.map(|r| (r + variant.rotation) % 4),
-        }),
+        Face::Vertical(face) => Face::Vertical(face.turned(variant.rotation)),
     }
 }
 
