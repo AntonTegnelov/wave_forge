@@ -2533,15 +2533,26 @@ impl Runtime {
         };
         // Starting a thread costs some tens of microseconds, more than most products take, so a
         // stage's chunks are shared out only when, by what its products have cost so far, they
-        // come to more than a few milliseconds.
+        // come to more than a few milliseconds. A stage that has made none yet is timed on its
+        // first chunk alone, so a first batch of costly products is shared out too.
         let timing = &self.timings[index];
-        let expected_ms = timing.ms / timing.products.max(1) as f64 * chunks.len() as f64;
-        let threads = if expected_ms < PARALLEL_MS {
+        let mut generated: Vec<Generated> = Vec::with_capacity(chunks.len());
+        let (each_ms, rest) = match (timing.products, chunks.split_first()) {
+            (0, Some((&first, rest))) => {
+                let first = timed(first);
+                let each_ms = first.as_ref().map_or(0.0, |&(_, ms)| ms);
+                generated.push(first);
+                (each_ms, rest)
+            }
+            _ => (timing.ms / timing.products.max(1) as f64, &chunks[..]),
+        };
+        let threads = if each_ms * (rest.len() as f64) < PARALLEL_MS {
             1
         } else {
-            self.threads.get().min(chunks.len())
+            self.threads.get().min(rest.len())
         };
-        map_on_threads(threads, &chunks, |&chunk| timed(chunk))
+        generated.extend(map_on_threads(threads, rest, |&chunk| timed(chunk)));
+        generated
     }
 
     /// Each stage's needed chunks that are not generated yet, farthest from the focus first, so
