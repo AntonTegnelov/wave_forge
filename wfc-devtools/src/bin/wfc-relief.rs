@@ -17,7 +17,7 @@ use image::{Rgb, RgbImage};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use wave_forge::stages::{Pack, Runtime};
+use wave_forge::stages::{Pack, Runtime, StageKind};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 #[derive(Parser)]
@@ -97,7 +97,24 @@ fn main() -> Result<()> {
     let scale = pack
         .scale(&args.stage)
         .ok_or_else(|| anyhow!("{} is no stage of the pack", args.stage))? as f32;
+    ensure!(
+        pack.is_field(&args.stage),
+        "{} is not a Field stage",
+        args.stage
+    );
     if let Some(curves) = &args.curves {
+        ensure!(
+            matches!(
+                pack.kind(curves),
+                Some(
+                    StageKind::Region { .. }
+                        | StageKind::Rivers { .. }
+                        | StageKind::Network { .. }
+                        | StageKind::TableCurves { .. }
+                )
+            ),
+            "{curves} is no Region, Rivers, Network or TableCurves stage of the pack"
+        );
         ensure!(
             pack.scale(curves) == Some(scale as u32),
             "{curves} is no stage of the drawn stage's scale"
@@ -132,7 +149,7 @@ fn main() -> Result<()> {
     for &chunk in &chunks {
         let field = runtime
             .field(&args.stage, chunk)
-            .ok_or_else(|| anyhow!("{} is not a Field stage", args.stage))?;
+            .ok_or_else(|| anyhow!("{} was not generated at {chunk:?}", args.stage))?;
         let x0 = (chunk.x - args.corner[0]) as u32 * args.chunk_size;
         let y0 = (chunk.y - args.corner[1]) as u32 * args.chunk_size;
         for (i, &value) in field.values.iter().enumerate() {
@@ -171,7 +188,10 @@ fn main() -> Result<()> {
             }
         };
         for &chunk in &chunks {
-            for curve in runtime.curves(curves, chunk).unwrap_or(&[]) {
+            let drawn = runtime
+                .curves(curves, chunk)
+                .ok_or_else(|| anyhow!("{curves} was not generated at {chunk:?}"))?;
+            for curve in drawn {
                 for pair in curve.points.windows(2) {
                     let (a, b) = (pair[0], pair[1]);
                     let steps = (libm::hypotf(b[0] - a[0], b[1] - a[1]) / scale * 4.0)
