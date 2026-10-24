@@ -2055,10 +2055,13 @@ impl Runtime {
     }
 
     /// Generates on up to `threads` threads at once: in each step, the products of a stage whose
-    /// inputs are ready are generated together, each on whichever thread is free. A product is a
-    /// function of what the runtime holds, so the threads change how soon a world is generated and
-    /// never what it holds. A runtime starts with one, which leaves the other cores to the game; a
-    /// world generated ahead of time, before play, can take them all.
+    /// inputs are ready are generated together, each on whichever thread is free. A stage's chunks
+    /// of a step are shared out only when, by what its products have cost so far, they come to
+    /// more than a few milliseconds, since starting a thread costs more than most products take; a
+    /// stage that has made none yet is timed on its first chunk alone. A product is a function of
+    /// what the runtime holds, so the threads change how soon a world is generated and never what
+    /// it holds. A runtime starts with one, which leaves the other cores to the game; a world
+    /// generated ahead of time, before play, can take them all.
     #[must_use]
     pub const fn with_threads(mut self, threads: NonZeroUsize) -> Self {
         self.threads = threads;
