@@ -8,6 +8,7 @@
 //! asked for in, each is computed from the same inputs and comes out the same.
 
 use super::assemble::Growth;
+use super::brushes::{MAX_BRUSH_RADIUS, MAX_COORDINATE};
 use super::caves::{self, CavePlan, CaveRules};
 use super::connected::connected;
 use super::droplets::{Droplets, drain, droplet_start};
@@ -1080,14 +1081,29 @@ impl Runtime {
         for row in &rows.rows {
             let curve = self.table_curve(index, rows, row);
             let radius = curve.values[0];
-            let finite = curve.points.iter().flatten().all(|value| value.is_finite());
-            if !finite || !(0.0..=widest.map_or(f32::MAX, |widest| widest as f32)).contains(&radius)
+            let finite = curve
+                .points
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite() && value.abs() <= MAX_COORDINATE);
+            // The chunks a curve is drawn in are found over its extent, so a curve across a
+            // continent is fine and one across the whole lattice is not.
+            let extent = (0..2).all(|axis| {
+                let along = curve.points.iter().map(|point| point[axis]);
+                along.clone().fold(f32::MIN, f32::max) - along.fold(f32::MAX, f32::min)
+                    <= MAX_CURVE_EXTENT
+            });
+            if !finite
+                || !extent
+                || !(0.0..=widest.map_or(f32::MAX, |widest| widest as f32)).contains(&radius)
             {
                 return Err(StageError::Table {
                     table: table.clone(),
                     message: format!(
                         "stage {:?}: row {:?} makes a curve through {:?} of radius {radius}; \
-                         points are finite and a radius is from 0 to {}",
+                         points lie within {MAX_COORDINATE} cells of the origin and \
+                         {MAX_CURVE_EXTENT} of each other along each axis, and a radius is from \
+                         0 to {}",
                         stage.name,
                         row.id.0,
                         curve.points,
@@ -1229,8 +1245,14 @@ impl Runtime {
         let mut footprints: Vec<Footprint> = Vec::with_capacity(rows.rows.len());
         for row in &rows.rows {
             let (at, side) = ([row.values[x], row.values[y]], row.values[side]);
-            if !(at[0].is_finite() && at[1].is_finite()) {
-                return Err(failed(format!("row {:?} stands at {at:?}", row.id.0)));
+            if !at
+                .iter()
+                .all(|value| value.is_finite() && value.abs() <= MAX_COORDINATE)
+            {
+                return Err(failed(format!(
+                    "row {:?} stands at {at:?}, beyond {MAX_COORDINATE} cells of the origin",
+                    row.id.0
+                )));
             }
             if side.fract() != 0.0 || !(1.0..=*max_size as f32).contains(&side) {
                 return Err(failed(format!(
@@ -1905,6 +1927,16 @@ impl Runtime {
                         .ok_or_else(|| {
                             StageError::Edit(format!("{stage:?} is no field stage to raise"))
                         })?;
+                    if !(by.is_finite()
+                        && [column.0, column.1]
+                            .iter()
+                            .all(|&c| c.unsigned_abs() <= MAX_COORDINATE as u64))
+                    {
+                        return Err(StageError::Edit(format!(
+                            "a raise of {by} at {column:?}; a column lies within \
+                             {MAX_COORDINATE} cells of the origin"
+                        )));
+                    }
                     *folded.raised.entry((index, *column)).or_default() += by;
                 }
                 Edit::Dig { stage, at, radius } | Edit::Fill { stage, at, radius } => {
@@ -1915,9 +1947,12 @@ impl Runtime {
                         .ok_or_else(|| {
                             StageError::Edit(format!("{stage:?} is no volume to dig or fill"))
                         })?;
-                    if !(radius.is_finite() && *radius > 0.0 && at.iter().all(|a| a.is_finite())) {
+                    let near = |a: &f32| a.is_finite() && a.abs() <= MAX_COORDINATE;
+                    if !(*radius > 0.0 && *radius <= MAX_BRUSH_RADIUS && at.iter().all(near)) {
                         return Err(StageError::Edit(format!(
-                            "a ball of radius {radius} at {at:?}"
+                            "a ball of radius {radius} at {at:?}; a radius is above 0 and at \
+                             most {MAX_BRUSH_RADIUS} cells, within {MAX_COORDINATE} cells of the \
+                             origin"
                         )));
                     }
                     let fill = matches!(edit, Edit::Fill { .. });
@@ -6207,6 +6242,10 @@ fn barrier_value(pools: &[Pool; 2], half: f32, z: f32) -> f32 {
 /// How many region fields computed for sampling a runtime keeps, the latest first to stay: enough for
 /// a history sampling the regions around a spot, bounded for one sampling a whole unbounded map.
 const SAMPLED_REGIONS: usize = 8;
+
+/// The widest a TableCurves row's curve may reach along either axis, in cells: the chunks it is
+/// drawn in are found over its extent.
+pub const MAX_CURVE_EXTENT: f32 = 8192.0;
 
 /// How far outside a tunnel or room, in cells, a Carve stage still lowers a voxel.
 const CARVE_MARGIN: f32 = 1.0;

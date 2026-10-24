@@ -209,8 +209,9 @@ and
 everything that reads them within its reach, then returns the drops as `request` does. Staleness is
 kept per chunk, so a raise regenerates a reader's neighbouring chunks when their reach covers the
 raised chunk, even where it does not cover the column. An edit that raises a stage that is no
-field, digs or fills one that is no volume, has a ball without a positive radius, or names a point
-no point stage placed, fails with `StageError::Edit` and changes nothing.
+field, digs or fills one that is no volume, has a ball without a positive radius or wider than
+`MAX_BRUSH_RADIUS` (256 cells), lies beyond `MAX_COORDINATE` (2^24 cells) of the origin, or names a
+point no point stage placed, fails with `StageError::Edit` and changes nothing.
 `Edits::to_ron` and `from_ron` save and load the log.
 
 `stages::brushes::stroke(&runtime, &brush, &path)` gives the edits a brush makes dragged along
@@ -874,7 +875,8 @@ columns `at` give in WFC cells, as many chunks on a side as its `size` column sa
 from 1 to `m`; for an even size the extra chunk lies towards +x and +y. Its height is found as a
 Sites stage finds it, and its `id` is `SiteId::Row` with the row's id.
 
-`Runtime::set_facts` refuses rows whose position is not finite, whose size is not a whole number
+`Runtime::set_facts` refuses rows whose position is not finite or lies beyond `MAX_COORDINATE` of
+the origin, whose size is not a whole number
 from 1 to `m`, or whose site comes within a chunk of another row's, naming both rows: Flatten and
 Solve rely on sites keeping a chunk apart, as a Sites stage's do. A stage reading a TableSites stage
 before the runtime has facts fails with `StageError::NoFacts`. Loading refuses a table or a column
@@ -1345,7 +1347,9 @@ curve for every row of a table ([Tables of facts](#tables-of-facts)), from the p
 columns give to the one the `to` columns give, in WFC cells, with the radius its `radius` column
 gives at both ends. A history lays its roads this way, a row per stretch between two villages. A
 curve's id is `CurveId::Row` with its row's id, and a chunk's product is the curves that pass
-through it. `Runtime::set_facts` refuses a row whose points are not finite, or whose radius is
+through it. `Runtime::set_facts` refuses a row whose points are not finite or lie beyond
+`MAX_COORDINATE` of the origin, whose curve reaches further than `MAX_CURVE_EXTENT` (8192 cells)
+along either axis, since the chunks it is drawn in are found over its extent, or whose radius is
 negative or beyond the `max_radius` of an Apply stage that draws it, naming the row.
 
 ### Apply

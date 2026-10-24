@@ -188,3 +188,18 @@ fn a_dig_of_a_field_or_a_ball_without_size_is_refused() {
     assert!(matches!(field, Err(StageError::Edit(_))), "{field:?}");
     assert!(matches!(empty, Err(StageError::Edit(_))), "{empty:?}");
 }
+
+#[test]
+fn a_ball_too_wide_or_too_far_out_is_refused() {
+    let mut runtime = runtime();
+
+    let wide = runtime.set_edits(&Edits {
+        log: vec![dig([1.0, 1.0, 1.0], 1e30)],
+    });
+    let far = runtime.set_edits(&Edits {
+        log: vec![dig([1e12, 1.0, 1.0], 2.0)],
+    });
+
+    assert!(matches!(wide, Err(StageError::Edit(_))), "{wide:?}");
+    assert!(matches!(far, Err(StageError::Edit(_))), "{far:?}");
+}

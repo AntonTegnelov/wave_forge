@@ -299,3 +299,20 @@ fn a_region_jobs_curve_of_fewer_values_than_points_is_refused() {
         "{result:?}"
     );
 }
+
+#[test]
+fn a_road_across_more_of_the_lattice_than_a_curve_may_reach_is_refused() {
+    let across = runtime(vec![road(1, (0.0, 0.0), (1e9, 1e9), 1.0)]);
+    let far_out = runtime(vec![road(1, (1e12, 0.0), (1e12, 10.0), 1.0)]);
+
+    assert!(
+        matches!(&across, Err(StageError::Table { table, .. }) if table == "roads"),
+        "{:?}",
+        across.map(|_| ())
+    );
+    assert!(
+        matches!(&far_out, Err(StageError::Table { table, .. }) if table == "roads"),
+        "{:?}",
+        far_out.map(|_| ())
+    );
+}
