@@ -829,29 +829,28 @@ impl WaveForgeWorld {
     /// One array of tile indices per layer; the last one covers everything above it. This is how a
     /// world gets a ground layer and open sky: give the bottom layer the tiles that belong on the
     /// ground and the top layer the ones that belong in the air. An empty array means the layer
-    /// allows everything.
+    /// allows everything. A negative tile is reported as an error and changes nothing.
     ///
     /// Call it before [`WaveForgeWorld::start`], which is when the world is built.
     #[func]
     fn set_layer_tiles(&mut self, layers: Array<PackedInt32Array>) {
-        self.layers = layers
+        let Some(layers) = layers
             .iter_shared()
-            .map(|tiles| {
-                tiles
-                    .as_slice()
-                    .iter()
-                    .map(|&tile| tile.unsigned_abs())
-                    .collect()
-            })
-            .collect();
+            .map(|tiles| non_negative_tiles(&tiles))
+            .collect::<Option<Vec<Vec<u32>>>>()
+        else {
+            godot_error!("wave forge: set_layer_tiles was given a negative tile");
+            return;
+        };
+        self.layers = layers;
     }
 
     /// Forbids `tiles` in the cells along one face of a bounded world, where nothing outside would
     /// continue them: a road may leave the world, a bridge to nowhere may not.
     ///
     /// `axis` is 0 to 5 for +x, -x, +y, -y, +z, -z, on the lattice's own axes. An axis the world is
-    /// unbounded along has no face, so its ban never applies. Call it before
-    /// [`WaveForgeWorld::start`].
+    /// unbounded along has no face, so its ban never applies. A negative tile is reported as an
+    /// error and changes nothing. Call it before [`WaveForgeWorld::start`].
     #[func]
     fn ban_tiles_on_face(&mut self, axis: i32, tiles: PackedInt32Array) {
         let Ok(axis) = usize::try_from(axis) else {
@@ -862,11 +861,11 @@ impl WaveForgeWorld {
             godot_error!("wave forge: no axis {axis}, the lattice has six");
             return;
         }
-        self.face_bans[axis] = tiles
-            .as_slice()
-            .iter()
-            .map(|&tile| tile.unsigned_abs())
-            .collect();
+        let Some(tiles) = non_negative_tiles(&tiles) else {
+            godot_error!("wave forge: ban_tiles_on_face was given a negative tile");
+            return;
+        };
+        self.face_bans[axis] = tiles;
     }
 
     /// Asks for the chunks around `position`, which is where the player is.
@@ -1915,4 +1914,13 @@ const fn status_name(status: RegionStatus) -> &'static str {
         RegionStatus::BorderContradiction => "border_contradiction",
         RegionStatus::Superseded => "superseded",
     }
+}
+
+/// The tiles of `tiles`, or `None` if one is negative.
+fn non_negative_tiles(tiles: &PackedInt32Array) -> Option<Vec<u32>> {
+    tiles
+        .as_slice()
+        .iter()
+        .map(|&tile| u32::try_from(tile).ok())
+        .collect()
 }
