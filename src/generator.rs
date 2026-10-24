@@ -24,7 +24,7 @@ pub enum ChunkEvent {
     /// straight back to its caller instead.
     Evicted(ChunkCoord),
     /// The chunk could not be generated. Asking again would fail the same way, so the generator
-    /// leaves it alone until its neighbourhood changes.
+    /// leaves it alone until it is imported ([`WorldGenerator::import`]).
     Failed {
         chunk: ChunkCoord,
         status: RegionStatus,
@@ -38,8 +38,8 @@ pub struct GeneratorStats {
     pub batches: u32,
     /// Chunks generated.
     pub solved: u32,
-    /// Chunks that needed a repair, and the chunks those repairs rewrote. A rule set is
-    /// streaming-clean when the first of these stays zero.
+    /// Chunks that needed a repair and got one. A rule set is streaming-clean when this stays
+    /// zero.
     pub repaired: u32,
     /// Chunks a repair rewrote cells of, counted once per repair that touched them.
     pub rewritten_by_repair: u32,
