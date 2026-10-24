@@ -210,8 +210,10 @@ engine; the caller appends them to the log, and undoes a stroke by taking them o
 | `Dig { stage, radius }`, `Fill { stage, radius }` | balls of `radius` dug out of or filled into a volume along the path, half a radius apart |
 | `Remove { stages, radius }` | the removal of every point of the point stages `stages` within `radius` of the path, in the chunks the runtime holds |
 
-A stroke without a path, a radius that is not positive, a smoothing strength outside 0 to 1, or a
-stage of the wrong kind fails with `StageError::Edit`.
+A stroke without a path, a radius that is not positive or beyond `MAX_BRUSH_RADIUS` (256 cells), a
+point that is not finite or lies beyond `MAX_COORDINATE` (2^24 cells) of the origin, a path longer
+than `MAX_STROKE` (4096 cells), a smoothing strength outside 0 to 1, or a stage of the wrong kind
+fails with `StageError::Edit`.
 
 ## Persistence and saves
 

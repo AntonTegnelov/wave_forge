@@ -77,14 +77,25 @@ impl Canvas for Runtime {
     }
 }
 
+/// The farthest from the origin a stroke's point may lie, in cells: where a cell's position in an
+/// `f32` is still exact.
+pub const MAX_COORDINATE: f32 = 16_777_216.0;
+
+/// The longest stroke, in cells: every column within its radius of the path is visited.
+pub const MAX_STROKE: f32 = 4096.0;
+
+/// The widest brush, in cells.
+pub const MAX_BRUSH_RADIUS: f32 = 256.0;
+
 /// The edits a stroke of `brush` along `path` makes in the world `runtime` holds: points in cells,
 /// along the lattice's x and y and up, in the order they were painted. A path of one point is a
 /// dab.
 ///
 /// # Errors
-/// [`StageError::Edit`] for a path without points, a radius that is not positive, a strength out
-/// of range, or a stage that is not of the kind the brush paints; and what [`Runtime::sample`]
-/// gives for a smoothed stage it cannot sample.
+/// [`StageError::Edit`] for a path without points, with a point that is not finite or lies beyond
+/// [`MAX_COORDINATE`] cells, or longer than [`MAX_STROKE`] cells; a radius that is not positive or
+/// beyond [`MAX_BRUSH_RADIUS`]; a strength out of range, or a stage that is not of the kind the
+/// brush paints; and what [`Runtime::sample`] gives for a smoothed stage it cannot sample.
 pub fn stroke(
     runtime: &impl Canvas,
     brush: &Brush,
@@ -94,6 +105,29 @@ pub fn stroke(
     if path.is_empty() {
         return wrong("a stroke without a path".to_owned());
     }
+    if let Some(point) = path.iter().find(|point| {
+        !point
+            .iter()
+            .all(|c| c.is_finite() && c.abs() <= MAX_COORDINATE)
+    }) {
+        return wrong(format!(
+            "a stroke through {point:?}; points lie within {MAX_COORDINATE} cells of the origin"
+        ));
+    }
+    let length: f32 = path
+        .windows(2)
+        .map(|pair| {
+            (0..3)
+                .map(|i| (pair[1][i] - pair[0][i]).powi(2))
+                .sum::<f32>()
+                .sqrt()
+        })
+        .sum();
+    if length > MAX_STROKE {
+        return wrong(format!(
+            "a stroke {length} cells long; at most {MAX_STROKE} are allowed"
+        ));
+    }
     let radius = match brush {
         Brush::Raise { radius, .. }
         | Brush::Smooth { radius, .. }
@@ -101,8 +135,10 @@ pub fn stroke(
         | Brush::Fill { radius, .. }
         | Brush::Remove { radius, .. } => *radius,
     };
-    if !(radius.is_finite() && radius > 0.0) {
-        return wrong(format!("a brush of radius {radius}"));
+    if !(radius.is_finite() && radius > 0.0 && radius <= MAX_BRUSH_RADIUS) {
+        return wrong(format!(
+            "a brush of radius {radius}; above 0 and at most {MAX_BRUSH_RADIUS} cells are allowed"
+        ));
     }
     match brush {
         Brush::Raise {
