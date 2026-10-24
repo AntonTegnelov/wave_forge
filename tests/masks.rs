@@ -150,7 +150,7 @@ fn a_town_fills_only_the_masked_columns_of_its_site() {
 }
 
 #[test]
-fn painting_again_solves_only_that_town_again() {
+fn painting_again_solves_the_town_again_and_repaints_only_what_the_brush_reaches() {
     let mut runtime = runtime();
     let brush = Brush::Raise {
         stage: "paint".to_owned(),

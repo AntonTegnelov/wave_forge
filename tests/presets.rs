@@ -1,7 +1,8 @@
 //! Presets and their parameters (docs/product/user-stories.md, N2): a pack's parameters change
 //! what reads them and nothing else, and every value in each preset's ranges gives a sound world,
-//! swept over a grid of values and seeds: islands, hills and forests, the canyon desert, the
-//! archipelago, the cave level and the small city, whose city the reference solver solves.
+//! swept over a grid of values: at two seeds for the islands, hills and forests, the canyon desert,
+//! the archipelago and the cave level, and at one for the small city, whose city the reference
+//! solver solves, which makes each world of it slow to generate.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -48,7 +49,12 @@ fn params(values: [(&str, f32); 3]) -> BTreeMap<String, f32> {
 
 /// The share of the area's columns above the water, and how many trees stand in it, checking on
 /// the way that every height is finite and every tree stands on grass above the water.
-fn survey(runtime: &Runtime) -> (f32, usize) {
+fn survey(runtime: &Runtime, pack: &Pack) -> (f32, usize) {
+    let names = pack.kind("surface").expect("a surface stage").categories();
+    let grass = names
+        .iter()
+        .position(|&name| name == "grass")
+        .expect("grass") as u8;
     let (mut land, mut columns, mut trees) = (0, 0, 0);
     for chunk in area() {
         let height = runtime.field("height", chunk).expect("generated");
@@ -60,8 +66,18 @@ fn survey(runtime: &Runtime) -> (f32, usize) {
             land += usize::from(value > 0.0);
             columns += 1;
         }
+        let surface = runtime.categories("surface", chunk).expect("generated");
         for tree in runtime.points("trees", chunk).expect("generated") {
             assert!(tree.position[2] > 1.2, "a tree at {:?}", tree.position);
+            let [x, y] = [tree.position[0], tree.position[1]].map(|at| at.floor() as i64);
+            let local =
+                [x - i64::from(chunk.x) * 8, y - i64::from(chunk.y) * 8].map(|at| at as u32);
+            assert_eq!(
+                surface.get(local[0], local[1]),
+                grass,
+                "a tree off the grass at {:?}",
+                tree.position
+            );
             trees += 1;
         }
     }
@@ -82,9 +98,9 @@ fn every_value_in_the_islands_ranges_gives_a_sound_world() {
                         params([("land", land), ("roughness", roughness), ("trees", trees)]);
                     runtime.set_params(&values).expect("values in range");
 
-                    generate(&mut runtime, &["height", "trees"]);
+                    generate(&mut runtime, &["height", "surface", "trees"]);
 
-                    let (share, count) = survey(&runtime);
+                    let (share, count) = survey(&runtime, &pack);
                     let at =
                         format!("seed {seed}, land {land}, roughness {roughness}, trees {trees}");
                     // Some sea and some land for every amount between the ends.
@@ -176,8 +192,8 @@ fn more_land_makes_more_land_and_more_trees_more_trees() {
                 ("trees", trees),
             ]))
             .expect("values in range");
-        generate(&mut runtime, &["height", "trees"]);
-        survey(&runtime)
+        generate(&mut runtime, &["height", "surface", "trees"]);
+        survey(&runtime, &pack)
     };
 
     let lands: Vec<f32> = [0.0, 0.25, 0.5, 0.75, 1.0]
