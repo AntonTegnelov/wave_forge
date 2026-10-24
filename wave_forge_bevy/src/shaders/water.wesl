@@ -26,10 +26,11 @@ struct WaterLook {
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     let depth = in.uv.x;
-    let deep = 1.0 - exp(-max(depth, 0.0) / look.clarity);
+    // At zero both divide by zero, so each is held at a hundredth.
+    let deep = 1.0 - exp(-max(depth, 0.0) / max(look.clarity, 0.01));
     pbr_input.material.base_color = vec4<f32>(
         mix(look.shallow_colour.rgb, look.deep_colour.rgb, deep),
-        mix(look.opacity.x, look.opacity.y, deep) * smoothstep(0.0, look.shore, depth),
+        mix(look.opacity.x, look.opacity.y, deep) * smoothstep(0.0, max(look.shore, 0.01), depth),
     );
     var out: FragmentOutput;
     if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {

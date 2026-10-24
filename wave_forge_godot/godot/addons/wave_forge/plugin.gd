@@ -47,9 +47,6 @@ const SHORTCUTS := {
 	"wave_forge/brush_fill": ["Fill brush", KEY_5],
 	"wave_forge/brush_remove": ["Remove brush", KEY_6],
 }
-## How far along a ray the plugin looks for the ground, in world units, and in what steps.
-const RAY_LENGTH := 2000.0
-const RAY_STEP := 0.5
 
 var dock: EditorDock
 var preset_choice: OptionButton
@@ -128,6 +125,8 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if stages == null or not is_instance_valid(stages):
 		return AFTER_GUI_INPUT_PASS
 	if not painting_toggle.button_pressed:
+		# Painting turned off mid-stroke ends the stroke, which a later press starts afresh.
+		stroking = false
 		cursor.visible = false
 		if event is InputEventMouseMotion and not String(stages.candidates_stage).is_empty():
 			candidate.show_candidate(stages.candidate_under(camera.project_ray_origin(event.position), camera.project_ray_normal(event.position)))
@@ -137,35 +136,30 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			stroking = true
 			path = PackedVector3Array()
 			before = stages.edits_log()
-			_add_point(camera, event.position)
-		else:
+			_add_point(_ground_under(camera, event.position))
+		elif stroking:
+			# A release whose press painting did not see, painting turned on while held, has no
+			# stroke to finish.
 			stroking = false
 			_finish_stroke()
+			path = PackedVector3Array()
 		return AFTER_GUI_INPUT_STOP
 	if event is InputEventMouseMotion:
-		cursor.show_at(_ground_under(camera, event.position), radius_spin.value, stages.cell_size)
+		var ground = _ground_under(camera, event.position)
+		cursor.show_at(ground, radius_spin.value, stages.cell_size)
 		if stroking:
-			_add_point(camera, event.position)
+			_add_point(ground)
 			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
 
-## Adds the ground under the mouse to the stroke's path, if the ray from the camera meets it.
-func _add_point(camera: Camera3D, screen: Vector2) -> void:
-	var ground = _ground_under(camera, screen)
+## Adds `ground`, where the mouse's ray meets the ground, to the stroke's path, if it meets it.
+func _add_point(ground: Variant) -> void:
 	if ground != null:
 		path.append(ground)
 
 ## Where the ray from the camera through `screen` first meets the ground, or null if it does not.
 func _ground_under(camera: Camera3D, screen: Vector2) -> Variant:
-	var from := camera.project_ray_origin(screen)
-	var along := camera.project_ray_normal(screen)
-	var travelled := 0.0
-	while travelled < RAY_LENGTH:
-		var at := from + along * travelled
-		if at.y <= stages.ground_height(at):
-			return at
-		travelled += RAY_STEP
-	return null
+	return stages.ground_under(camera.project_ray_origin(screen), camera.project_ray_normal(screen))
 
 ## Paints the stroke and records it as one undo action.
 func _finish_stroke() -> void:
@@ -195,7 +189,10 @@ func _brush() -> Dictionary:
 	var shown := brush_choice.get_item_text(brush_choice.selected)
 	var brush := {"brush": BRUSHES[shown], "radius": radius_spin.value}
 	if shown == "Remove":
-		brush["stages"] = PackedStringArray(stage_edit.text.split(",", false))
+		var names := PackedStringArray()
+		for name in stage_edit.text.split(",", false):
+			names.append(name.strip_edges())
+		brush["stages"] = names
 	else:
 		brush["stage"] = stage_edit.text.strip_edges()
 	if shown == "Lower":
@@ -262,6 +259,10 @@ func _apply_preset(path: String, action: String) -> void:
 		undo.add_undo_property(stages, property, stages.get(property))
 	undo.add_do_method(stages, "notify_property_list_changed")
 	undo.add_undo_method(stages, "notify_property_list_changed")
+	# The preview shows the preset at once, as a dropped scene does, and the old settings again on
+	# undo.
+	undo.add_do_method(self, "_restart_preview")
+	undo.add_undo_method(self, "_restart_preview")
 	undo.commit_action()
 
 ## Gives the selected node a stack of its pack_file's pack in place of the file, as one undo action.

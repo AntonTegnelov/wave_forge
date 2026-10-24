@@ -377,9 +377,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let base_roughness = pbr_input.material.perceptual_roughness;
     // What the ground looks like here: one material's look, or where materials meet, theirs blended
     // by how high each stands.
-    var here = look_of(ids[0], world, world_dx, world_dy, surface, drivers, base_roughness, grain > 0.0);
-    // Most fragments have one material on all four corners and need no border.
-    if ids[1] != ids[0] || ids[2] != ids[0] || ids[3] != ids[0] {
+    // Most fragments have one material on all four corners and need no border; a border works out
+    // each material's look once, its first among them too.
+    var here: Look;
+    if ids[1] == ids[0] && ids[2] == ids[0] && ids[3] == ids[0] {
+        here = look_of(ids[0], world, world_dx, world_dy, surface, drivers, base_roughness, grain > 0.0);
+    } else {
         var heights: array<f32, 4>;
         var shares: array<f32, 4>;
         var looks: array<Look, 4>;
@@ -422,6 +425,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             blended.textured += looks[k].textured * weight;
             total += weight;
         }
+        here = blended;
         here.albedo = blended.albedo / total;
         here.micro = blended.micro / total;
         here.roughness = blended.roughness / total;

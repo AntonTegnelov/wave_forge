@@ -55,6 +55,11 @@ func bind(node: Node) -> void:
 	if stages != null:
 		stages.world_run_progress.connect(_on_progress)
 		stages.world_run_finished.connect(_on_finished)
+	# The buttons follow the bound node's own run, which may be under way or may never have been.
+	var running: bool = stages != null and stages.is_world_running()
+	run_button.disabled = running
+	cancel_button.disabled = not running
+	status.text = "Running." if running else ""
 
 ## Starts the node's world run into the directory; returns whether it started. It needs a node
 ## that has started, which in the editor is one whose `preview_in_editor` is on.

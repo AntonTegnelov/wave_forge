@@ -1953,33 +1953,69 @@ impl WaveForgeStages {
     /// without either stage.
     #[func]
     fn ground_height(&self, position: Vector3) -> f32 {
-        let Some(worker) = &self.worker else {
-            return f32::NAN;
+        self.ground_heights()
+            .and_then(|height| height([position.x, position.z]))
+            .unwrap_or(f32::NAN)
+    }
+
+    /// Where the ray from `from` along `along` first meets the ground `ground_height` gives, within
+    /// 2 000 units, or null: what the editor's brush paints at. It steps half a cell at a time and
+    /// halves the last step until the hit is within a hundredth of a cell.
+    #[func]
+    fn ground_under(&self, from: Vector3, along: Vector3) -> Variant {
+        let Some(height) = self.ground_heights() else {
+            return Variant::nil();
         };
+        let along = along.normalized();
+        let step = 0.5 * self.cell_size.x.min(self.cell_size.z);
+        if step.is_nan() || step <= 0.0 || !along.is_finite() {
+            return Variant::nil();
+        }
+        let below = |at: Vector3| height([at.x, at.z]).is_some_and(|ground| at.y <= ground);
+        let mut travelled = 0.0;
+        while travelled < 2000.0 {
+            let at = from + along * travelled;
+            if below(at) {
+                // The surface lies within the last step: halve it until it is close enough.
+                let (mut above, mut under) = ((travelled - step).max(0.0), travelled);
+                while under - above > 0.01 * step {
+                    let middle = 0.5 * (above + under);
+                    if below(from + along * middle) {
+                        under = middle;
+                    } else {
+                        above = middle;
+                    }
+                }
+                return (from + along * under).to_variant();
+            }
+            travelled += step;
+        }
+        Variant::nil()
+    }
+
+    /// The ground's height at a point of the ground plane, in Godot's world, from `ground_stage`
+    /// or else the volume's surface, as `ground_height` gives it; `None` without a running world.
+    fn ground_heights(&self) -> Option<impl Fn([f32; 2]) -> Option<f32> + '_> {
+        let worker = self.worker.as_ref()?;
         let columns = [
             self.chunk_cells.x.max(1) as u32,
             self.chunk_cells.y.max(1) as u32,
         ];
-        if self.ground_stage.is_empty() {
-            let Some(rock) = &self.rock else {
-                return f32::NAN;
-            };
-            return volume_height(
-                [position.x, position.z],
-                columns,
-                |at| rock.built.get(&at).map(|built| &built.mesh),
-                self.cell_size.to_array(),
-            )
-            .unwrap_or(f32::NAN);
-        }
+        let cell = self.cell_size.to_array();
         let stage = self.ground_stage.to_string();
-        ground_height(
-            [position.x, position.z],
-            columns,
-            |at| worker.field(&stage, at),
-            self.cell_size.to_array(),
-        )
-        .unwrap_or(f32::NAN)
+        let rock = self.rock.as_ref();
+        Some(move |at: [f32; 2]| {
+            if stage.is_empty() {
+                volume_height(
+                    at,
+                    columns,
+                    |chunk| rock?.built.get(&chunk).map(|built| &built.mesh),
+                    cell,
+                )
+            } else {
+                ground_height(at, columns, |chunk| worker.field(&stage, chunk), cell)
+            }
+        })
     }
 
     /// A stage's value at a position in Godot's world space, on the ground plane, computed on the
@@ -3205,6 +3241,12 @@ impl WaveForgeStages {
                 }
             }
         }
+    }
+
+    /// Whether a world run is under way, from `run_world` until `world_run_finished`.
+    #[func]
+    fn is_world_running(&self) -> bool {
+        self.world_run.is_some()
     }
 
     /// Stops the world run under way after the chunk it is on; `run_world` again resumes it.
