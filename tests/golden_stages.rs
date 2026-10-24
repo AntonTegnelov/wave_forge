@@ -1,6 +1,7 @@
 //! The same stages on every platform: a pack whose fields, categories and points depend on the
-//! math functions a platform's C library would otherwise compute (a sine, a distance, an angle and
-//! the spacing between points), compared bit for bit with a record made on another machine.
+//! math functions a platform's C library would otherwise compute (a sine, a distance, an angle, the
+//! spacing between points, and the exponentials, sines and distances of the Erode, Droplets and
+//! Horizon stages), compared bit for bit with a record made on another machine.
 //!
 //! Stages run on the CPU, and a world has to be the same for every player
 //! (docs/architecture/engine-integration.md, "Noise that means the same in both engines"). Every
@@ -34,6 +35,9 @@ const PACK: &str = r#"(
             (category: "east", when: [Less(Angle((3.0, 5.0)), Constant(0.25))]),
         ], otherwise: "rest")),
         (name: "trees", kind: Scatter(kind: "tree", height: "ground", spacing: 3, apart: 3)),
+        (name: "eroded", kind: Erode(input: "ground", spacing: 16.0, octaves: 3, depth: 2.0, slope: 0.3)),
+        (name: "worn", kind: Droplets(height: "ground", region: 4, fade: 8)),
+        (name: "sky", kind: Horizon(input: "ground", reach: 8, directions: 16)),
     ],
 )"#;
 
@@ -66,17 +70,26 @@ fn generate() -> String {
         .map(|&chunk| FocusPoint::new(chunk, 0))
         .collect();
     runtime
-        .request(&focus, &["ground", "ring", "trees"])
+        .request(
+            &focus,
+            &["ground", "ring", "trees", "eroded", "worn", "sky"],
+        )
         .expect("stages");
     runtime.run_until_idle().expect("the stages run");
 
     let start = 0xCBF2_9CE4_8422_2325;
     let (mut ground, mut ring, mut trees) = (start, start, start);
+    let mut fields = [("eroded", start), ("worn", start), ("sky", start)];
     let mut points = 0;
     for &chunk in &area {
         let field = runtime.field("ground", chunk).expect("generated");
         for value in &field.values {
             ground = fnv(ground, &value.to_bits().to_le_bytes());
+        }
+        for (stage, hash) in &mut fields {
+            for value in &runtime.field(stage, chunk).expect("generated").values {
+                *hash = fnv(*hash, &value.to_bits().to_le_bytes());
+            }
         }
         let categories = runtime.categories("ring", chunk).expect("generated");
         ring = fnv(ring, &categories.values);
@@ -92,7 +105,12 @@ fn generate() -> String {
         points > 50,
         "only {points} trees, so the spacing is barely tested"
     );
-    format!("{HEADER}\nground {ground:016x}\nring {ring:016x}\ntrees {trees:016x}\n")
+    let mut record =
+        format!("{HEADER}\nground {ground:016x}\nring {ring:016x}\ntrees {trees:016x}\n");
+    for (stage, hash) in fields {
+        record.push_str(&format!("{stage} {hash:016x}\n"));
+    }
+    record
 }
 
 #[test]
