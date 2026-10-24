@@ -7,7 +7,7 @@
 
 use crate::render::Color;
 use std::collections::BTreeSet;
-use wfc_rules::{AdjacencyRules, TileSet, Transformation};
+use wfc_rules::{AdjacencyRules, TileSet};
 
 /// Axis indices used by [`AdjacencyRules`].
 pub mod axis {
@@ -68,11 +68,7 @@ impl RuleBuilder {
 }
 
 fn uniform_tileset(num_tiles: usize) -> TileSet {
-    TileSet::new(
-        vec![1.0; num_tiles],
-        vec![vec![Transformation::Identity]; num_tiles],
-    )
-    .expect("uniform tile set is valid")
+    TileSet::new(vec![1.0; num_tiles]).expect("uniform tile set is valid")
 }
 
 /// Tiles of [`coast_2d`].
@@ -111,7 +107,7 @@ mod tests {
     use super::*;
 
     fn assert_symmetric(fixture: &Fixture) {
-        let n = fixture.tileset.num_transformed_tiles();
+        let n = fixture.tileset.num_tiles();
         for along in axis::ALL {
             for a in 0..n {
                 for b in 0..n {

@@ -46,7 +46,9 @@ pub struct Naming {
 }
 
 /// An outline: the points of a face, each coordinate in steps of the tolerance.
-type Outline = BTreeSet<(i64, i64)>;
+/// A point of an outline, in grid steps across the face and up it.
+type Point = (i64, i64);
+type Outline = BTreeSet<Point>;
 
 /// The module set `modules` propose, as a module set file: a face per distinct outline, named by
 /// its connector, and every module built from its six faces, rotatable, with a weight of 1. A
@@ -128,6 +130,8 @@ enum Face {
     Top {
         connector: usize,
         rotation: Option<u8>,
+        /// Whether the outline looks the same after a half turn, so `rotation` counts modulo two.
+        half_turn: bool,
     },
 }
 
@@ -160,28 +164,27 @@ impl Proposal {
         let modules = modules
             .iter()
             .map(|module| {
-                let outline = |axis: usize, at: f32, point: fn([f32; 3]) -> [f32; 2]| -> Outline {
-                    module
-                        .positions
-                        .iter()
-                        .filter(|p| (p[axis] - at).abs() <= tolerance)
-                        .map(|&p| {
-                            let [u, v] = point(p);
-                            (
-                                (u / tolerance).round() as i64,
-                                (v / tolerance).round() as i64,
-                            )
-                        })
-                        .collect()
-                };
+                // Each point is rounded to the grid once, in the cell's frame, and every view and
+                // mirror of it is formed from those integers: rounding a view's own coordinates
+                // would round a point on a half step one way seen from one side and the other way
+                // seen from the other, and a symmetric face would not meet itself.
+                let outline =
+                    |axis: usize, at: f32, point: fn([i64; 3], i64) -> Point| -> Outline {
+                        module
+                            .positions
+                            .iter()
+                            .filter(|p| (p[axis] - at).abs() <= tolerance)
+                            .map(|p| point(p.map(|c| (c / tolerance).round() as i64), steps))
+                            .collect()
+                    };
                 // Each side seen from outside its cell, left to right and upward.
                 let faces = [
-                    found.side(&outline(0, 1.0, |p| [p[1], p[2]]), steps),
-                    found.side(&outline(0, 0.0, |p| [1.0 - p[1], p[2]]), steps),
-                    found.side(&outline(1, 1.0, |p| [1.0 - p[0], p[2]]), steps),
-                    found.side(&outline(1, 0.0, |p| [p[0], p[2]]), steps),
-                    found.top(&outline(2, 1.0, |p| [p[0], p[1]]), steps),
-                    found.top(&outline(2, 0.0, |p| [p[0], p[1]]), steps),
+                    found.side(&outline(0, 1.0, |q, _| (q[1], q[2])), steps),
+                    found.side(&outline(0, 0.0, |q, steps| (steps - q[1], q[2])), steps),
+                    found.side(&outline(1, 1.0, |q, steps| (steps - q[0], q[2])), steps),
+                    found.side(&outline(1, 0.0, |q, _| (q[0], q[2])), steps),
+                    found.top(&outline(2, 1.0, |q, _| (q[0], q[1])), steps),
+                    found.top(&outline(2, 0.0, |q, _| (q[0], q[1])), steps),
                 ];
                 (module.name.to_owned(), faces)
             })
@@ -208,9 +211,11 @@ impl Proposal {
                     Face::Top {
                         connector,
                         rotation,
+                        half_turn,
                     } => Face::Top {
                         connector: sides + connector,
                         rotation,
+                        half_turn,
                     },
                     other => other,
                 });
@@ -297,6 +302,7 @@ impl Proposal {
                 Face::Top {
                     connector,
                     rotation: None,
+                    ..
                 } => {
                     let shown = shown[connector];
                     (
@@ -308,12 +314,14 @@ impl Proposal {
                 Face::Top {
                     connector,
                     rotation: Some(rotation),
+                    half_turn,
                 } => {
                     let shown = shown[connector];
+                    let half = if half_turn { ", half_turn: true" } else { "" };
                     (
                         &mut top_faces,
                         format!("{shown} r{rotation}"),
-                        format!("Top(connector: {shown:?}, rotation: Some({rotation}))"),
+                        format!("Top(connector: {shown:?}, rotation: Some({rotation}){half})"),
                     )
                 }
             };
@@ -407,6 +415,8 @@ impl Found {
         }
         let canonical = turns.iter().min().expect("four turns").clone();
         let connector = Self::number(&mut self.tops, &canonical);
+        // An outline a half turn takes to itself has two orientations, not four.
+        let half_turn = turns[2] == turns[0];
         let rotation = if turns.iter().all(|turned| *turned == canonical) {
             None
         } else {
@@ -417,11 +427,12 @@ impl Found {
                 from = turn(&from);
                 rotation += 1;
             }
-            Some(rotation)
+            Some(if half_turn { rotation % 2 } else { rotation })
         };
         Face::Top {
             connector,
             rotation,
+            half_turn: half_turn && rotation.is_some(),
         }
     }
 }
@@ -452,6 +463,44 @@ mod tests {
         match parse_rule_file(&propose(modules, 0.125)).expect("a valid module set") {
             RuleFile::Modules(modules) => modules,
             RuleFile::Tiles { .. } => panic!("a module set"),
+        }
+    }
+
+    #[test]
+    fn a_wall_whose_edge_lies_on_a_half_step_meets_itself() {
+        // An edge 8.5 steps of 16 across, which rounding in each side's own view would put at 9
+        // seen from +x and at 8 seen from -x.
+        let slab = cuboid([0.0, 0.0, 0.0], [1.0, 0.53125, 1.0]);
+        let kit = [KitModule {
+            name: "slab",
+            positions: &slab,
+        }];
+
+        let RuleFile::Modules(modules) =
+            parse_rule_file(&propose(&kit, 0.0625)).expect("a valid module set")
+        else {
+            panic!("a module set");
+        };
+
+        let slab = modules.variants_of("slab")[0];
+        assert!(modules.rules.check(slab, slab, crate::modules::POS_X));
+    }
+
+    #[test]
+    fn a_wall_through_the_cells_centre_has_two_turns_that_stack_on_themselves() {
+        // A bar along x, on whole steps of the grid, whose top a half turn takes to itself.
+        let wall = cuboid([0.0, 0.375, 0.0], [1.0, 0.625, 1.0]);
+        let kit = [KitModule {
+            name: "wall",
+            positions: &wall,
+        }];
+
+        let modules = compiled(&kit);
+
+        let turns = modules.variants_of("wall");
+        assert_eq!(turns.len(), 2, "a quarter turn and none, not four");
+        for &turn in &turns {
+            assert!(modules.rules.check(turn, turn, crate::modules::UP));
         }
     }
 

@@ -4,8 +4,6 @@ use thiserror::Error;
 
 /// Contains format-specific parsing logic (e.g., RON).
 pub mod formats;
-/// Contains logic for generating expanded rules based on symmetry.
-pub mod generator;
 pub mod import;
 /// Checks a model drawn for a module against its faces, which it reads from a module set file.
 #[cfg(feature = "serde")]
@@ -14,11 +12,11 @@ pub mod kit_check;
 pub mod loader;
 pub mod modules;
 pub mod template;
-/// Contains the core types (`TileId`, `TileSet`, `AdjacencyRules`).
+/// Contains the core types (`TileSet`, `AdjacencyRules`).
 pub mod types;
 
 /// Re-export core types for easier access
-pub use types::{AdjacencyRules, TileId, TileSet, TileSetError, Transformation};
+pub use types::{AdjacencyRules, TileSet, TileSetError};
 
 /// Errors that can occur when loading or parsing adjacency rules.
 #[derive(Error, Debug)]
@@ -34,9 +32,6 @@ pub enum LoadError {
     /// Contains a description of the validation failure.
     #[error("Invalid rule data: {0}")]
     InvalidData(String),
-    /// An unspecified error occurred during the loading process.
-    #[error("Unknown loading error")]
-    Unknown,
     /// Required feature not enabled
     #[error("Required feature not enabled: {0}")]
     FeatureNotEnabled(String),

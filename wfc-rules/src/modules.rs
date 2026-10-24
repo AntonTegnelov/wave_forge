@@ -11,7 +11,7 @@
 //! `0 = +x`, `1 = -x`, `2 = +y`, `3 = -y`, `4 = +z` (up), `5 = -z` (down). Rotations are quarter
 //! turns counter-clockwise around `+z`.
 
-use crate::types::{AdjacencyRules, TileSet, TileSetError, Transformation};
+use crate::types::{AdjacencyRules, TileSet, TileSetError};
 use std::collections::{BTreeSet, HashMap};
 use thiserror::Error;
 
@@ -146,6 +146,9 @@ pub struct VerticalFace {
     /// `None` if the face looks the same under every rotation; otherwise its orientation in quarter
     /// turns, which must line up with the touching face after both modules are rotated.
     pub rotation: Option<u8>,
+    /// Whether the face looks the same after a half turn, a bar through the cell's centre say, so
+    /// its orientation counts modulo two.
+    pub half_turn: bool,
 }
 
 impl VerticalFace {
@@ -155,6 +158,7 @@ impl VerticalFace {
         Self {
             connector,
             rotation: None,
+            half_turn: false,
         }
     }
 
@@ -164,6 +168,31 @@ impl VerticalFace {
         Self {
             connector,
             rotation: Some(quarter_turns % 4),
+            half_turn: false,
+        }
+    }
+
+    /// A face that looks the same after a half turn but not after a quarter turn, with an
+    /// orientation of `quarter_turns` modulo 2.
+    #[must_use]
+    pub const fn half_turn(connector: u32, quarter_turns: u8) -> Self {
+        Self {
+            connector,
+            rotation: Some(quarter_turns % 2),
+            half_turn: true,
+        }
+    }
+
+    /// The face turned by `quarter_turns`.
+    #[must_use]
+    pub const fn turned(self, quarter_turns: u8) -> Self {
+        let period = if self.half_turn { 2 } else { 4 };
+        Self {
+            rotation: match self.rotation {
+                Some(rotation) => Some((rotation + quarter_turns) % period),
+                None => None,
+            },
+            ..self
         }
     }
 }
@@ -440,10 +469,7 @@ fn variant_face(prototypes: &[ModulePrototype], variant: ModuleVariant, axis: us
     let prototype = &prototypes[variant.prototype];
     match prototype.face(rotate_axis(axis, (4 - variant.rotation) % 4)) {
         Face::Horizontal(face) => Face::Horizontal(face),
-        Face::Vertical(face) => Face::Vertical(VerticalFace {
-            connector: face.connector,
-            rotation: face.rotation.map(|r| (r + variant.rotation) % 4),
-        }),
+        Face::Vertical(face) => Face::Vertical(face.turned(variant.rotation)),
     }
 }
 
@@ -560,36 +586,28 @@ impl ModuleSet {
             .collect();
 
         let mut tuples = Vec::new();
+        // Whether each variant's face along each axis meets some face, marked as tuples are found.
+        let mut matched = vec![false; variants.len() * NUM_AXES];
         for (a, &va) in variants.iter().enumerate() {
             for (b, &vb) in variants.iter().enumerate() {
                 for axis in 0..NUM_AXES {
                     if self.may_touch(va, vb, axis, &index_by_name) {
                         tuples.push((axis, a, b));
+                        matched[a * NUM_AXES + axis] = true;
                     }
                 }
             }
         }
-
-        let mut unmatched_faces = Vec::new();
-        for a in 0..variants.len() {
-            for axis in 0..NUM_AXES {
-                if !tuples
-                    .iter()
-                    .any(|&(t_axis, t_a, _)| t_axis == axis && t_a == a)
-                {
-                    unmatched_faces.push((a, axis));
-                }
-            }
-        }
+        let unmatched_faces: Vec<(usize, usize)> = (0..variants.len())
+            .flat_map(|a| (0..NUM_AXES).map(move |axis| (a, axis)))
+            .filter(|&(a, axis)| !matched[a * NUM_AXES + axis])
+            .collect();
 
         let weights: Vec<f32> = variants
             .iter()
             .map(|v| self.prototypes[v.prototype].weight)
             .collect();
-        let tileset = TileSet::new(
-            weights,
-            vec![vec![Transformation::Identity]; variants.len()],
-        )?;
+        let tileset = TileSet::new(weights)?;
         let rules = AdjacencyRules::from_allowed_tuples(variants.len(), NUM_AXES, tuples);
 
         Ok(CompiledModules {
@@ -604,8 +622,9 @@ impl ModuleSet {
     }
 
     /// All distinct rotations of every prototype. A rotation is dropped when every face of it equals
-    /// the corresponding face of a rotation already kept, so symmetric pieces do not get duplicate
-    /// tiles (duplicates would silently multiply their effective weight and slow propagation).
+    /// the corresponding face of a rotation already kept, and so do its exclusions, which turn with
+    /// it, so symmetric pieces do not get duplicate tiles (duplicates would silently multiply their
+    /// effective weight and slow propagation).
     fn expand_rotations(&self) -> Vec<ModuleVariant> {
         let mut variants = Vec::new();
         for prototype in 0..self.prototypes.len() {
@@ -620,11 +639,21 @@ impl ModuleSet {
                     prototype,
                     rotation,
                 };
+                // A variant's exclusions along the world's axes, in one order whatever its own.
+                let exclusions = |variant: ModuleVariant| {
+                    let mut turned: Vec<(usize, &str)> = self.prototypes[variant.prototype]
+                        .excluded
+                        .iter()
+                        .map(|(axis, name)| (rotate_axis(*axis, variant.rotation), name.as_str()))
+                        .collect();
+                    turned.sort_unstable();
+                    turned
+                };
                 let duplicate = kept.iter().any(|&existing| {
                     (0..NUM_AXES).all(|axis| {
                         variant_face(&self.prototypes, existing, axis)
                             == variant_face(&self.prototypes, candidate, axis)
-                    })
+                    }) && exclusions(existing) == exclusions(candidate)
                 });
                 if !duplicate {
                     kept.push(candidate);
@@ -872,6 +901,28 @@ mod tests {
     }
 
     #[test]
+    fn a_symmetric_module_with_an_exclusion_turns_it_with_each_rotation() {
+        let a = uniform("a", OPEN).exclude(POS_X, "b");
+        let b = uniform("b", OPEN);
+
+        let compiled = ModuleSet::new().with(a).with(b).compile().unwrap();
+
+        let turns = compiled.variants_of("a");
+        assert_eq!(turns.len(), 4, "the exclusion tells the rotations apart");
+        let b = compiled.variants_of("b")[0];
+        for (rotation, &a) in turns.iter().enumerate() {
+            let excluded = rotate_axis(POS_X, rotation as u8);
+            for axis in [POS_X, POS_Y, NEG_X, NEG_Y] {
+                assert_eq!(
+                    compiled.rules.check(a, b, axis),
+                    axis != excluded,
+                    "rotation {rotation}, axis {axis}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn faces_without_a_partner_are_reported() {
         let ground = ModulePrototype::new(
             "ground",
@@ -980,6 +1031,6 @@ mod tests {
             .compile()
             .unwrap();
         assert_eq!(compiled.tileset.weights, vec![0.5, 3.0]);
-        assert_eq!(compiled.tileset.num_transformed_tiles(), 2);
+        assert_eq!(compiled.tileset.num_tiles(), 2);
     }
 }
