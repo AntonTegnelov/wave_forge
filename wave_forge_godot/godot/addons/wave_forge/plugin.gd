@@ -189,7 +189,10 @@ func _brush() -> Dictionary:
 	var shown := brush_choice.get_item_text(brush_choice.selected)
 	var brush := {"brush": BRUSHES[shown], "radius": radius_spin.value}
 	if shown == "Remove":
-		brush["stages"] = PackedStringArray(stage_edit.text.split(",", false))
+		var names := PackedStringArray()
+		for name in stage_edit.text.split(",", false):
+			names.append(name.strip_edges())
+		brush["stages"] = names
 	else:
 		brush["stage"] = stage_edit.text.strip_edges()
 	if shown == "Lower":
