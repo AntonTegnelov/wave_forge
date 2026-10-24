@@ -28,6 +28,8 @@ var scene_proposal := ""
 var city: Node
 var started_usec := 0
 var settled_frames := 0
+## The chunks of the world that could not be placed, by their status.
+var failed := {}
 
 func _initialize() -> void:
 	var library := MeshLibrary.new()
@@ -90,6 +92,7 @@ func _initialize() -> void:
 	city.collider_radius = 1
 	city.set_collision_shapes(scene_library)
 	root.add_child(city)
+	city.chunk_failed.connect(func(chunk: Vector3i, status: String) -> void: failed[chunk] = status)
 	if not city.start():
 		_fail("the world of the folder's kit did not start")
 		return
@@ -102,8 +105,9 @@ func _process(_delta: float) -> bool:
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
 		_fail("the world of the folder's kit had %d bodies after %.0f s" % [city.collider_chunks().size(), TIMEOUT_S])
 		return true
-	# A chunk of nothing but air has no body, so the wait is for nothing to be pending.
-	if city.collider_chunks().is_empty() or city.stats()["pending_colliders"] > 0:
+	# A chunk of nothing but air has no body, so the wait is for each of the four chunks to have
+	# arrived or failed, and nothing pending.
+	if city.generated_chunks().size() + failed.size() < 4 or city.collider_chunks().is_empty() or city.stats()["pending_colliders"] > 0:
 		return false
 	settled_frames += 1
 	if settled_frames < SETTLE_FRAMES:
@@ -134,7 +138,7 @@ func _check_walkable() -> bool:
 	if walkable == 0:
 		_fail("no block with open air above in the world of the folder's kit")
 		return true
-	print("verify_import: a world of the folder's kit, its items' shapes its colliders, has a body under each of its %d walkable cells" % walkable)
+	print("verify_import: a world of the folder's kit, its items' shapes its colliders, has a body under each of its %d walkable cells, over the %d chunks placed; not placed: %s" % [walkable, city.generated_chunks().size(), failed])
 	quit(0)
 	return true
 
