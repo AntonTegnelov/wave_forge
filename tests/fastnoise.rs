@@ -17,6 +17,7 @@
 //! engine may replace one, a Godot `FastNoiseLite` resource say.
 
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use wave_forge::noise::{
     CellularDistanceFunction, CellularReturnType, DomainWarpFractalType, DomainWarpType,
@@ -224,12 +225,19 @@ fn the_default_is_godots_and_every_property_is_written() {
     let text = ron::to_string(&NoiseConfig::default()).expect("a config serialises");
 
     assert_eq!(NoiseConfig::default(), godot_default);
-    for property in PROPERTIES {
-        assert!(
-            text.contains(&format!("{property}:")),
-            "{property} missing from {text}"
-        );
-    }
+    // The written fields by name: a substring would find `frequency` in `domain_warp_frequency`.
+    let ron::Value::Map(fields) = ron::from_str::<ron::Value>(&text).expect("RON") else {
+        panic!("a config is written as a struct: {text}");
+    };
+    let written: BTreeSet<String> = fields
+        .keys()
+        .map(|key| match key {
+            ron::Value::String(name) => name.clone(),
+            other => panic!("a field named by {other:?}"),
+        })
+        .collect();
+    let properties: BTreeSet<String> = PROPERTIES.iter().map(|&p| p.to_owned()).collect();
+    assert_eq!(written, properties);
     assert_eq!(
         ron::from_str::<NoiseConfig>(&text),
         Ok(NoiseConfig::default())
