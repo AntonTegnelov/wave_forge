@@ -73,13 +73,18 @@ impl Default for SolverConfig {
 pub struct Params {
     /// 0 propagates to a fixpoint and stops; 1 solves the region.
     pub mode: u32,
+    /// Steps of work a region may take, as [`SolverConfig::max_steps`].
     pub max_steps: u32,
+    /// Attempts at a region before it is reported as exhausted, as [`SolverConfig::max_attempts`].
     pub max_attempts: u32,
+    /// 0 collapses the single global minimum per round; r > 0 collapses every local minimum within
+    /// Chebyshev radius r at once, as [`SolverConfig::radius`].
     pub radius: u32,
     /// 0 restarts a region on a contradiction; 1 restores the checkpoint before the failing round.
     pub undo: u32,
     /// 1 when the batch is one problem tried with different seeds; see `RegionBatch::portfolio`.
     pub portfolio: u32,
+    /// Unused words that give the struct the 32 bytes of the shader's `Params`.
     pub padding: [u32; 2],
 }
 

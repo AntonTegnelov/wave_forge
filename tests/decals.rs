@@ -21,6 +21,10 @@ fn curve(points: Vec<[f32; 2]>, values: Vec<f32>) -> Curve {
 }
 
 /// Ground whose height in cells is the column's x plus twice its y.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "it stands for ground a game may not have yet"
+)]
 fn sloped(x: i64, y: i64) -> Option<f32> {
     Some(x as f32 + 2.0 * y as f32)
 }

@@ -11,13 +11,21 @@ use wfc_rules::{AdjacencyRules, TileSet};
 
 /// Axis indices used by [`AdjacencyRules`].
 pub mod axis {
+    /// Axis index of `+x`.
     pub const POS_X: usize = 0;
+    /// Axis index of `-x`.
     pub const NEG_X: usize = 1;
+    /// Axis index of `+y`.
     pub const POS_Y: usize = 2;
+    /// Axis index of `-y`.
     pub const NEG_Y: usize = 3;
+    /// Axis index of `+z` (up).
     pub const POS_Z: usize = 4;
+    /// Axis index of `-z` (down).
     pub const NEG_Z: usize = 5;
+    /// The four axes in the horizontal plane.
     pub const HORIZONTAL: [usize; 4] = [POS_X, NEG_X, POS_Y, NEG_Y];
+    /// All six axes, in index order.
     pub const ALL: [usize; 6] = [POS_X, NEG_X, POS_Y, NEG_Y, POS_Z, NEG_Z];
 
     /// Axes are stored in pairs, so the opposite direction differs only in the lowest bit.
@@ -28,11 +36,15 @@ pub mod axis {
 
 /// A rule set together with what is needed to render and check it.
 pub struct Fixture {
+    /// Each tile's name, by tile index.
     pub names: &'static [&'static str],
+    /// Each tile's colour in renders, by tile index.
     pub palette: &'static [Color],
     /// Tiles that represent empty space in 3D renders.
     pub empty_tiles: &'static [usize],
+    /// The tiles' weights.
     pub tileset: TileSet,
+    /// Which tiles may sit next to which, along each axis.
     pub rules: AdjacencyRules,
 }
 
@@ -73,9 +85,13 @@ fn uniform_tileset(num_tiles: usize) -> TileSet {
 
 /// Tiles of [`coast_2d`].
 pub mod coast {
+    /// Water, which touches only water and sand.
     pub const WATER: usize = 0;
+    /// Sand, between water and grass.
     pub const SAND: usize = 1;
+    /// Grass, between sand and forest.
     pub const GRASS: usize = 2;
+    /// Forest, which touches only grass and forest.
     pub const FOREST: usize = 3;
 }
 

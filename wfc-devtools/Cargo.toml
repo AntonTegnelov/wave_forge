@@ -24,3 +24,6 @@ wave_forge = { path = ".." }
 [dev-dependencies]
 # The CPU reference solver is the ground truth for the tests here, never a fallback.
 wfc-core = { path = "../wfc-core", features = ["reference"] }
+
+[lints]
+workspace = true

@@ -56,15 +56,15 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color {
     let sector = (h * 6.0).floor();
     let f = h * 6.0 - sector;
     let (p, q, t) = (v * (1.0 - s), v * (1.0 - f * s), v * (1.0 - (1.0 - f) * s));
-    let (r, g, b) = match (sector as i32).rem_euclid(6) {
-        0 => (v, t, p),
-        1 => (q, v, p),
-        2 => (p, v, t),
-        3 => (p, q, v),
-        4 => (t, p, v),
-        _ => (v, p, q),
+    let rgb = match (sector as i32).rem_euclid(6) {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
     };
-    [r, g, b].map(|c| (c * 255.0).round() as u8)
+    rgb.map(|c| (c * 255.0).round() as u8)
 }
 
 fn shade(color: Color, factor: f32) -> Color {
@@ -94,6 +94,9 @@ fn fill_cell(image: &mut RgbImage, x: u32, y: u32, size: u32, color: Color) {
 }
 
 /// One `z` layer seen from above: `+x` to the right, `+y` up.
+///
+/// # Panics
+/// If `z` is not a layer of the grid.
 pub fn render_layer(grid: &TileGrid, z: usize, style: &Style) -> RgbImage {
     assert!(
         z < grid.depth,
@@ -306,6 +309,9 @@ pub struct VoxelModel {
 
 impl VoxelModel {
     /// A model with no voxels.
+    ///
+    /// # Panics
+    /// If `resolution` is 0.
     pub fn empty(resolution: usize) -> Self {
         assert!(resolution > 0, "voxel resolution must be positive");
         Self {
@@ -315,6 +321,9 @@ impl VoxelModel {
     }
 
     /// Index of voxel `(x, y, z)` in [`VoxelModel::voxels`].
+    ///
+    /// # Panics
+    /// If a coordinate is not below the resolution.
     pub fn index(&self, x: usize, y: usize, z: usize) -> usize {
         let r = self.resolution;
         assert!(
@@ -337,6 +346,7 @@ impl VoxelModel {
 
     /// This model rotated by `quarter_turns` counter-clockwise around `+z` (seen from above), the
     /// rotation `wfc_rules::modules` applies to module variants.
+    #[must_use]
     pub fn rotated(&self, quarter_turns: u8) -> Self {
         let r = self.resolution;
         let mut out = Self::empty(r);
@@ -360,6 +370,9 @@ impl VoxelModel {
 /// [`VoxelModel`]. `models[tile]` must exist for every tile in the grid and all models must share
 /// one resolution. Voxels hidden behind filled neighbours are skipped, so cost follows the visible
 /// surface rather than the grid volume.
+///
+/// # Panics
+/// If the models do not share one resolution.
 pub fn render_voxel_isometric(grid: &TileGrid, models: &[VoxelModel], voxel_px: u32) -> RgbImage {
     let r = models.first().map_or(1, |m| m.resolution);
     assert!(

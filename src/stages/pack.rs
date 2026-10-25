@@ -18,6 +18,7 @@ pub const PACK_VERSION: u32 = 1;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackFile {
+    /// The pack format the file is written in, which has to be [`PACK_VERSION`].
     pub version: u32,
     /// The stages in the order a stack shows them; a stage may read any other, earlier or later.
     pub stages: Vec<StageDef>,
@@ -52,7 +53,9 @@ pub struct PackFile {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AmbienceDef {
+    /// The key a game maps to a sound: not empty, and no other ambient sound's.
     pub key: String,
+    /// Where it plays.
     pub kind: AmbienceKind,
 }
 
@@ -62,9 +65,20 @@ pub struct AmbienceDef {
 pub enum AmbienceKind {
     /// Along the curves of a Rivers, Region or TableCurves stage over the `height` field, spaced by
     /// the curves' radius, louder where a river runs wider and falls faster.
-    River { curves: String, height: String },
+    River {
+        /// The Rivers, Region or TableCurves stage whose curves it plays along, at scale 1.
+        curves: String,
+        /// The field of the ground's height, at scale 1, whose fall along a river makes it louder.
+        height: String,
+    },
     /// At the shores of a Lakes stage's lakes over the `height` field.
-    Lake { lakes: String, height: String },
+    Lake {
+        /// The Lakes stage whose shores it plays at, at scale 1.
+        lakes: String,
+        /// The field of the ground's height, at scale 1: a shore is where the lakes' surface
+        /// stands above it with dry ground beside it.
+        height: String,
+    },
 }
 
 impl PackFile {
@@ -144,7 +158,9 @@ fn check_ambience(file: &PackFile) -> Result<(), PackError> {
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ParamDef {
+    /// Its value when the runtime is given none, which lies in the range.
     pub default: f32,
+    /// The lowest and the highest value it may take, both included.
     pub range: (f32, f32),
 }
 
@@ -153,7 +169,9 @@ pub struct ParamDef {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackWater {
+    /// The sea's level, in cells of height: below it the ground is under water.
     pub level: f32,
+    /// The Lakes stage whose surface raises the water inland, if any.
     #[serde(default)]
     pub lakes: Option<String>,
 }
@@ -163,9 +181,19 @@ pub struct PackWater {
 #[serde(deny_unknown_fields)]
 pub enum Bound {
     /// Within `radius` of `centre`.
-    Disk { centre: (f32, f32), radius: f32 },
+    Disk {
+        /// The disk's centre.
+        centre: (f32, f32),
+        /// The disk's radius, above zero.
+        radius: f32,
+    },
     /// From `min` to `max`.
-    Rect { min: (f32, f32), max: (f32, f32) },
+    Rect {
+        /// The corner with the lowest x and y.
+        min: (f32, f32),
+        /// The corner with the highest x and y, above `min` along both.
+        max: (f32, f32),
+    },
 }
 
 impl Bound {
@@ -224,7 +252,9 @@ impl Bound {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TableDef {
+    /// The name stages and child tables read the table by, which no other table has.
     pub name: String,
+    /// Where its rows come from.
     pub kind: TableKind,
 }
 
@@ -233,7 +263,10 @@ pub struct TableDef {
 pub enum TableKind {
     /// Rows the game gives at run time ([`crate::stages::Facts::give`]), each with the game's own
     /// id and a value for every column: a history's villages, say.
-    Given { columns: Vec<(String, Column)> },
+    Given {
+        /// Each column's name and what it holds.
+        columns: Vec<(String, Column)>,
+    },
     /// Rows computed from the seed: for each row of `parent`, or once without a parent, `count`
     /// rows, each column's value from its expression. The expressions read the parent row
     /// ([`Expr::Parent`]), the row's own hash stream ([`Expr::Random`]), its place among its
@@ -242,10 +275,15 @@ pub enum TableKind {
     /// other parents' children change. `authored` rows join the generated ones, each under its
     /// parent with an id of its own, so adding one moves no generated row.
     Generated {
+        /// The table for each of whose rows it generates rows, or none to generate them once.
         #[serde(default)]
         parent: Option<String>,
+        /// How many rows it generates for each parent row, or in all without a parent: rounded
+        /// down, from 0 to [`MAX_CHILDREN`].
         count: Expr,
+        /// Each column's name and the expression its value is computed from.
         columns: Vec<(String, Expr)>,
+        /// The rows an author gives it beside the generated ones.
         #[serde(default)]
         authored: Vec<AuthoredRow>,
     },
@@ -271,6 +309,7 @@ pub struct AuthoredRow {
 /// name is its index in the list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum Column {
+    /// A number.
     Number,
     /// One of these names.
     Names(Vec<String>),
@@ -283,6 +322,9 @@ pub const MAX_CHILDREN: u32 = 65_536;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StageDef {
+    /// The name other stages read the stage by, which no other stage has: a lowercase ASCII letter
+    /// followed by lowercase letters, digits, `_` and `-`, since it names the directory a store
+    /// keeps the stage's chunks in.
     pub name: String,
     /// How many of the WFC lattice's cells one of the stage's columns spans along each axis: 1, the
     /// default, for the finest level, more for a coarse one, a world map's say. A stage's chunks
@@ -293,6 +335,7 @@ pub struct StageDef {
     /// What a save keeps of the stage. Default [`Persist::Pure`].
     #[serde(default)]
     pub persist: Persist,
+    /// What the stage does.
     pub kind: StageKind,
 }
 
@@ -328,6 +371,11 @@ const fn two() -> u32 {
 /// What a stage does.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    missing_docs,
+    reason = "each variant's doc says what its fields are, by name, as the pack format's reference \
+              (docs/reference/packs.md) does"
+)]
 pub enum StageKind {
     /// A value per cell column, computed from an expression at that column alone.
     Field(Expr),
@@ -846,6 +894,8 @@ pub enum StageKind {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Piece {
+    /// The name an engine binds a scene to and the stage's `start` names, which no other piece of
+    /// the stage has.
     pub name: String,
     /// Cells along the lattice's x and y, and levels upward.
     pub size: (u32, u32, u32),
@@ -855,6 +905,7 @@ pub struct Piece {
     /// Whether it only closes open doors, never grows.
     #[serde(default)]
     pub end: bool,
+    /// Its connectors, each on the side it faces.
     pub doors: Vec<Door>,
 }
 
@@ -873,7 +924,9 @@ pub enum Pattern {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spawnable {
+    /// The kind its points carry.
     pub kind: String,
+    /// What one of its points takes from a room's budget, from 1.
     pub cost: u32,
     /// How often it is drawn against the others a room can still afford.
     #[serde(default = "one_weight")]
@@ -888,9 +941,13 @@ pub struct Spawnable {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SolveMask {
+    /// The field stage the mask is read from.
     pub field: String,
+    /// The value the field has to be above at a column for the town to be built there.
     pub above: f32,
+    /// The tiles every column outside the mask holds.
     pub outside: Selector,
+    /// The tiles the lowest layer of a column outside the mask holds, if any.
     #[serde(default)]
     pub ground: Option<Selector>,
 }
@@ -900,6 +957,7 @@ pub struct SolveMask {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Room {
+    /// The name an engine binds a scene to.
     pub name: String,
     /// Cells along the lattice's x and y, and levels upward.
     pub size: (u32, u32, u32),
@@ -915,16 +973,22 @@ pub struct Room {
 pub struct Door {
     /// The cell it opens from, in the piece's cells and levels, on the side it faces.
     pub at: (u32, u32, u32),
+    /// The side of the piece it faces.
     pub facing: Facing,
+    /// What it joins: only to a door of the same kind.
     pub kind: String,
 }
 
 /// A side of a piece along the lattice: north is toward +y, east toward +x.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Facing {
+    /// Toward +y.
     North,
+    /// Toward +x.
     East,
+    /// Toward -y.
     South,
+    /// Toward -x.
     West,
 }
 
@@ -939,6 +1003,9 @@ pub const MAX_PIECES: u32 = 1024;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocationKind {
+    /// The kind's name, which its sites carry and their translation key `wf-place-<kind>` is made
+    /// from, and which no other kind of the stage has: a lowercase ASCII letter followed by
+    /// lowercase letters, digits, `_` and `-`.
     pub name: String,
     /// Higher is placed first; kinds of equal priority go in the order of their names.
     #[serde(default)]
@@ -1006,7 +1073,9 @@ pub const MAX_TRIES: u32 = 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Group {
+    /// The fewest and the most points in a group, the candidate included.
     pub size: (u32, u32),
+    /// How far from the candidate its group's points lie at most, in cells.
     pub radius: f32,
 }
 
@@ -1015,9 +1084,12 @@ pub struct Group {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScatterKind {
+    /// The kind its points carry.
     pub kind: String,
+    /// How often it is drawn against the stage's other kinds, above zero. Default 1.
     #[serde(default = "unit_weight")]
     pub weight: f32,
+    /// How many models an engine binds to it, from 1 to [`MAX_VARIANTS`]. Default 1.
     #[serde(default = "one_variant")]
     pub variants: u32,
 }
@@ -1030,9 +1102,9 @@ const fn one_variant() -> u32 {
     1
 }
 
-/// The most variants a kind may have, and appearance fields a Scatter stage may read: what a
-/// point carries.
+/// The most variants a kind may have, which a point carries as its variant.
 pub const MAX_VARIANTS: u32 = 256;
+/// The most appearance fields a Scatter stage may read, whose values each of its points carries.
 pub const MAX_APPEARANCE: usize = 2;
 
 /// The water a Scatter stage's points stand in: a point is kept where the ground lies between
@@ -1041,7 +1113,10 @@ pub const MAX_APPEARANCE: usize = 2;
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Water {
+    /// The least and the most depth of the ground below the pack's water, in cells, where a point
+    /// is kept.
     pub depth: (f32, f32),
+    /// Whether a point stands on the water's surface rather than on the ground under it.
     #[serde(default)]
     pub float: bool,
 }
@@ -1115,7 +1190,9 @@ pub enum Profile {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
+    /// The category the rule gives.
     pub category: String,
+    /// The conditions that all have to hold for it.
     pub when: Vec<Condition>,
 }
 
@@ -1123,7 +1200,9 @@ pub struct Rule {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Biome {
+    /// The biome's name, one of the stage's categories, which no other biome of the stage has.
     pub category: String,
+    /// Its point in the climate space: a value per climate expression, in their order.
     pub point: Vec<f32>,
 }
 
@@ -1133,8 +1212,11 @@ pub struct Biome {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Level {
+    /// The sites or Assemble stage whose footprints are levelled.
     pub sites: String,
+    /// How many cells under a site's height are filled solid.
     pub depth: u32,
+    /// How many cells above a site's height are emptied.
     pub clear: u32,
 }
 
@@ -1145,11 +1227,16 @@ pub struct Level {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tunnels {
+    /// The curves stage whose curves are carved as tubes.
     pub curves: String,
+    /// The height field the centre of a curve without heights runs below.
     #[serde(default)]
     pub height: Option<String>,
+    /// How far a tube's centre runs below the curve's heights or the `height` field, in cells.
+    /// Default 0.
     #[serde(default)]
     pub depth: f32,
+    /// The widest a tube's radius may be, in cells.
     pub max_radius: u32,
 }
 
@@ -1158,7 +1245,9 @@ pub struct Tunnels {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Materials {
+    /// The rules, in the order they are tried.
     pub rules: Vec<Rule>,
+    /// The material of a voxel where no rule holds.
     pub otherwise: String,
 }
 
@@ -1406,6 +1495,7 @@ impl Reach {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub enum Expr {
+    /// The number itself.
     Constant(f32),
     /// Value noise in 0..1: `octaves` layers, the first with `frequency` lattice points per cell,
     /// each next one at twice the frequency and half the weight. A noise with a `name` draws from
@@ -1413,8 +1503,11 @@ pub enum Expr {
     /// elsewhere; one without draws from its stage's own stream, which every unnamed noise of the
     /// stage shares.
     Noise {
+        /// The first layer's lattice points per cell, above zero.
         frequency: f32,
+        /// How many layers it sums, from 1 to 16.
         octaves: u32,
+        /// The stream it draws from, if any, in place of its stage's own.
         #[serde(default)]
         name: Option<String>,
     },
@@ -1425,6 +1518,7 @@ pub enum Expr {
     Input(String),
     /// The column's x and y.
     X,
+    /// The column's y.
     Y,
     /// The height of the voxel's centre in cells, which only a Volume stage has.
     Z,
@@ -1433,16 +1527,23 @@ pub enum Expr {
     /// The direction from a point to the column, as a fraction of a whole turn from +x towards
     /// +y, in 0..1.
     Angle((f32, f32)),
+    /// The sum of the two values.
     Add(Box<Expr>, Box<Expr>),
+    /// The first value less the second.
     Sub(Box<Expr>, Box<Expr>),
+    /// The product of the two values.
     Mul(Box<Expr>, Box<Expr>),
+    /// The lower of the two values.
     Min(Box<Expr>, Box<Expr>),
+    /// The higher of the two values.
     Max(Box<Expr>, Box<Expr>),
+    /// The value's absolute value.
     Abs(Box<Expr>),
     /// The value raised to a power above zero, keeping its sign: `sign(a) * |a|^exponent`, so
     /// noise around zero keeps its symmetry. An exponent above 1 flattens values near zero and
     /// sharpens the extremes; one below 1 does the reverse.
     Pow(Box<Expr>, f32),
+    /// The largest whole number not above the value.
     Floor(Box<Expr>),
     /// The sine of an angle in radians.
     Sin(Box<Expr>),
@@ -1478,8 +1579,11 @@ pub enum Expr {
     Share(String),
     /// `then` where the condition holds, `otherwise` where it does not.
     Select {
+        /// The condition tested at the column.
         when: Condition,
+        /// The value where the condition holds.
         then: Box<Expr>,
+        /// The value where it does not.
         otherwise: Box<Expr>,
     },
     /// One expression per category of a Rules stage, blended where categories meet: each
@@ -1487,9 +1591,13 @@ pub enum Expr {
     /// column outwards, and a category no case names takes `otherwise`. With a `blend` of 0 it
     /// picks the column's own category's expression.
     Match {
+        /// The Rules stage whose categories it reads.
         input: String,
+        /// Each category's name and its expression, one case per category at most.
         cases: Vec<(String, Expr)>,
+        /// The expression of every category no case names.
         otherwise: Box<Expr>,
+        /// How far around the column it looks for categories, in cells, at most [`MAX_BLEND`].
         blend: u32,
     },
 }
@@ -1522,7 +1630,9 @@ pub const MAX_DEPOSIT_TRIES: u32 = 16 * MAX_DEPOSITS;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub enum Condition {
+    /// The first value is below the second.
     Less(Box<Expr>, Box<Expr>),
+    /// The first value is above the second.
     Greater(Box<Expr>, Box<Expr>),
     /// The value lies between a low and a high bound, both included.
     Between(Box<Expr>, f32, f32),
@@ -1891,32 +2001,86 @@ impl Expr {
 /// Why a pack could not be loaded.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum PackError {
+    /// The text is not a pack file's RON, a field no part of a pack has included; it holds the
+    /// RON reader's message.
     #[error("not a pack: {0}")]
     Syntax(String),
+    /// The pack is of a version this library does not read.
     #[error("a pack of version {found}; this Wave Forge reads version {supported}")]
-    Version { found: u32, supported: u32 },
+    Version {
+        /// The pack's version.
+        found: u32,
+        /// The version this library reads, [`PACK_VERSION`].
+        supported: u32,
+    },
+    /// Two stages share the name it holds.
     #[error("two stages are named {0:?}")]
     DuplicateName(String),
+    /// A stage reads a name no stage has.
     #[error("stage {stage:?} reads {input:?}, which no stage is named")]
-    UnknownInput { stage: String, input: String },
+    UnknownInput {
+        /// The stage that reads it.
+        stage: String,
+        /// The name it reads.
+        input: String,
+    },
+    /// A stage cannot be generated as it is written: a parameter out of range or past its limit,
+    /// an input of the wrong type or scale, or a name that could not name a directory, say.
     #[error("stage {stage:?}: {message}")]
-    Invalid { stage: String, message: String },
+    Invalid {
+        /// The stage that is wrong.
+        stage: String,
+        /// What is wrong with it.
+        message: String,
+    },
+    /// Stages read each other in a cycle; it holds their names, each reading the next and the last
+    /// the first.
     #[error("these stages read each other in a cycle: {0:?}")]
     Cycle(Vec<String>),
+    /// The pack's world bound holds nothing; it holds the message saying so.
     #[error("{0}")]
     Bound(String),
+    /// The pack's water has a level that is not a number, or lakes that name no Lakes stage; it
+    /// holds what is wrong.
     #[error("the pack's water: {0}")]
     Water(String),
+    /// An ambient sound's key is empty or another's, its source is no stage of its kind, its
+    /// height is no field, or either is not at scale 1.
     #[error("the pack's ambience {key:?}: {message}")]
-    Ambience { key: String, message: String },
+    Ambience {
+        /// The sound's key.
+        key: String,
+        /// What is wrong with it.
+        message: String,
+    },
+    /// A parameter's default does not lie in its range, or the range is not finite.
     #[error("the pack's parameter {name:?}: {message}")]
-    Param { name: String, message: String },
+    Param {
+        /// The parameter's name.
+        name: String,
+        /// What is wrong with it.
+        message: String,
+    },
+    /// Two tables share the name it holds.
     #[error("two tables are named {0:?}")]
     DuplicateTable(String),
+    /// A table's parameter, expression or authored row is wrong, or its parents lead back to it.
     #[error("table {table:?}: {message}")]
-    InvalidTable { table: String, message: String },
+    InvalidTable {
+        /// The table that is wrong, one of the cycle's where parents lead back.
+        table: String,
+        /// What is wrong with it.
+        message: String,
+    },
+    /// One of the pack's noises cannot be sampled: a number that is not finite, or octaves
+    /// outside 1 to [`crate::noise::MAX_OCTAVES`].
     #[error("the pack's noise {name:?}: {message}")]
-    Noise { name: String, message: String },
+    Noise {
+        /// The noise's name in the pack's noises.
+        name: String,
+        /// What is wrong with it.
+        message: String,
+    },
 }
 
 /// Where an expression is evaluated, which decides what its leaves may read.

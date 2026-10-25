@@ -74,15 +74,30 @@ enum Report {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StageEvent {
     /// The product is ready to read.
-    Generated { stage: String, chunk: ChunkCoord },
+    Generated {
+        /// The stage's name.
+        stage: String,
+        /// The chunk.
+        chunk: ChunkCoord,
+    },
     /// The product is no longer needed and was dropped, so anything built from it can go too.
-    Dropped { stage: String, chunk: ChunkCoord },
+    Dropped {
+        /// The stage's name.
+        stage: String,
+        /// The chunk.
+        chunk: ChunkCoord,
+    },
     /// The save [`StageWorker::request_save`] asked for is ready to take
     /// ([`StageWorker::take_save`]).
     Saved,
     /// The report [`StageWorker::request_scatter_report`] asked for is ready to read
     /// ([`StageWorker::scatter_report`]).
-    Judged { stage: String, chunk: ChunkCoord },
+    Judged {
+        /// The Scatter stage's name.
+        stage: String,
+        /// The chunk the report is of.
+        chunk: ChunkCoord,
+    },
 }
 
 /// A runtime on its own thread. Dropping it asks the thread to stop and does not wait for it.

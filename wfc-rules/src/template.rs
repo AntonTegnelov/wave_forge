@@ -21,26 +21,38 @@ pub const MAX_PATTERNS: usize = 256;
 /// A template: `width` by `height` cells, row by row with x fastest, each holding a value.
 #[derive(Clone, Copy, Debug)]
 pub struct Template<'a> {
+    /// The template's width in cells, along x.
     pub width: usize,
+    /// The template's height in cells, along y.
     pub height: usize,
+    /// The cells' values, row by row with x fastest.
     pub cells: &'a [u32],
 }
 
 /// Why a template cannot be learnt.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TemplateError {
+    /// The number of cells is not `width` times `height`.
     #[error("{cells} cells do not fill a template of {width} by {height}")]
     Shape {
+        /// The template's width in cells.
         width: usize,
+        /// The template's height in cells.
         height: usize,
+        /// How many cells the template has.
         cells: usize,
     },
+    /// The pattern size is zero or larger than the template's width or height.
     #[error("a pattern of {n} by {n} does not fit a template of {width} by {height}")]
     Size {
+        /// The pattern's size in cells along each side.
         n: usize,
+        /// The template's width in cells.
         width: usize,
+        /// The template's height in cells.
         height: usize,
     },
+    /// The template holds more distinct patterns than [`MAX_PATTERNS`]; the count found.
     #[error("the template holds {0} patterns, more than the {MAX_PATTERNS} a set may have")]
     TooMany(usize),
 }

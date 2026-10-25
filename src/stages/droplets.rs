@@ -206,7 +206,12 @@ fn run_droplet(
                 sediment += wear;
             }
         }
-        speed = (speed * speed + fall * GRAVITY).max(0.0).sqrt();
+        #[expect(
+            clippy::suspicious_operation_groupings,
+            reason = "the speed squared gains the fall times gravity: energy, not a product mixed up"
+        )]
+        let gained = speed * speed + fall * GRAVITY;
+        speed = gained.max(0.0).sqrt();
         water *= 1.0 - EVAPORATION;
     }
 }

@@ -122,6 +122,7 @@ impl WorldExtent {
 /// One solved chunk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chunk {
+    /// Where the chunk is in the world, in chunk coordinates.
     pub coord: ChunkCoord,
     /// One tile per cell, in row-major order.
     pub tiles: Box<[u16]>,

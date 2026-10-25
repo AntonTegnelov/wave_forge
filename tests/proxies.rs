@@ -122,6 +122,10 @@ fn every_face_of_every_level_faces_out_of_its_box() {
 }
 
 #[test]
+#[expect(
+    clippy::match_same_arms,
+    reason = "each group of cells is listed on its own, as the comment above lays them out"
+)]
 fn a_coarser_box_is_filled_where_half_its_cells_are_in_their_average_colour() {
     // In the first group of two by two by two, four of eight cells: two red, two blue. In the
     // group beside it along x, three of eight: under half.

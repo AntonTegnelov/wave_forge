@@ -18,6 +18,7 @@ use wfc_core::{Chunk, ChunkCoord};
 /// A chunk's far stand-in, ready for an engine.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProxyMesh {
+    /// The chunk the stand-in is for.
     pub chunk: ChunkCoord,
     /// Relative to the chunk's lowest corner, four per face: every level's faces, finest first.
     pub positions: Vec<[f32; 3]>,

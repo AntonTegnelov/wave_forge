@@ -18,6 +18,7 @@
 //!
 //! and say in the commit why the stages changed.
 
+use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use wave_forge::stages::{Pack, Runtime};
@@ -108,7 +109,7 @@ fn generate() -> String {
     let mut record =
         format!("{HEADER}\nground {ground:016x}\nring {ring:016x}\ntrees {trees:016x}\n");
     for (stage, hash) in fields {
-        record.push_str(&format!("{stage} {hash:016x}\n"));
+        writeln!(record, "{stage} {hash:016x}").expect("a String takes any text");
     }
     record
 }

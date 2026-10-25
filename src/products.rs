@@ -43,7 +43,9 @@ pub fn tiles_hash(chunk: &Chunk) -> u64 {
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
 )]
 pub struct InstanceId {
+    /// The chunk the instance belongs to.
     pub chunk: ChunkCoord,
+    /// Its local id within the chunk.
     pub local: u64,
 }
 
@@ -210,6 +212,7 @@ pub struct NavSource {
     /// The lowest corner and size of the box to bake within: the chunk grown by the border along
     /// the engine's x and z, and by a chunk's height below and above.
     pub bounds_origin: [f32; 3],
+    /// The box's size along the engine's x, y and z.
     pub bounds_size: [f32; 3],
     /// How far the bounds reach past the chunk along x and z. Baked with a border this wide, the
     /// mesh ends on the chunk's edges, shaped by the neighbours' geometry as if there were no seam.
@@ -228,7 +231,12 @@ pub enum NavSourceError {
     TallWorld,
     /// The border reaches past the neighbouring chunks, whose geometry is all the source holds.
     #[error("a border of {border} reaches past a neighbouring chunk {chunk} wide")]
-    BorderTooWide { border: f32, chunk: f32 },
+    BorderTooWide {
+        /// The border asked for.
+        border: f32,
+        /// The chunk's narrowest width along x and z.
+        chunk: f32,
+    },
 }
 
 /// The navigation source of the chunk at `coord`: the collision shape of every module `faces`

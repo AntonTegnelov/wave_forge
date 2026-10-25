@@ -68,10 +68,18 @@ fn value(runtime: &Runtime, stage: &str, (x, y): (i64, i64)) -> f32 {
         .get(x.rem_euclid(s) as u32, y.rem_euclid(s) as u32)
 }
 
+#[expect(
+    clippy::unnecessary_box_returns,
+    reason = "an expression's operands are boxed"
+)]
 fn b(expr: Expr) -> Box<Expr> {
     Box::new(expr)
 }
 
+#[expect(
+    clippy::unnecessary_box_returns,
+    reason = "an expression's operands are boxed"
+)]
 fn constant(value: f32) -> Box<Expr> {
     b(Expr::Constant(value))
 }

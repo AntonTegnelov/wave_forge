@@ -41,7 +41,7 @@
 //! at the top of this file's source.
 
 // Constants and tables keep FastNoiseLite's digits, so they can be checked against its source.
-#![allow(clippy::excessive_precision)]
+#![allow(clippy::excessive_precision, clippy::unreadable_literal)]
 
 use serde::{Deserialize, Serialize};
 
@@ -541,7 +541,7 @@ impl NoiseConfig {
 
     /// FastNoiseLite's `DoSingleDomainWarp`: how far one warp octave moves a position.
     fn warp_single(&self, seed: i32, amp: f32, freq: f32, x: f32, y: f32) -> [f32; 2] {
-        let (dx, dy) = match self.domain_warp_type {
+        match self.domain_warp_type {
             DomainWarpType::Simplex => {
                 warp_simplex_gradient(seed, amp * 38.283_687_591_552_734_375, freq, x, y, false)
             }
@@ -549,8 +549,8 @@ impl NoiseConfig {
                 warp_simplex_gradient(seed, amp * 16.0, freq, x, y, true)
             }
             DomainWarpType::BasicGrid => warp_basic_grid(seed, amp, freq, x, y),
-        };
-        [dx, dy]
+        }
+        .into()
     }
 
     /// FastNoiseLite's 3D `DoSingleDomainWarp`.

@@ -233,9 +233,8 @@ where
                         return;
                     }
                 }
-                Ok(Command::Stop) => return,
+                Ok(Command::Stop) | Err(TryRecvError::Disconnected) => return,
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return,
             }
         }
         if let Err(error) = work(&mut world, reports) {

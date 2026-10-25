@@ -42,7 +42,10 @@ pub struct BlockSolver<B: ComputeBackend> {
 /// took. A kernel compiles on first use unless [`BlockSolver::warm`] compiled it ahead.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Compilation {
+    /// How many pipelines the solver has compiled.
     pub pipelines: u32,
+    /// The wall-clock time compiling them took, in milliseconds. Pipelines compiled together on
+    /// several threads count once.
     pub ms: f64,
 }
 

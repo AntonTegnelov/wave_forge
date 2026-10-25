@@ -156,9 +156,7 @@ fn a_bound_that_holds_nothing_is_refused() {
         "Rect(min: (5.0, 0.0), max: (1.0, 4.0))",
         "Disk(centre: (0.0, 0.0), radius: inf)",
     ] {
-        let result = Pack::parse(&format!(
-            r#"(version: 1, bound: Some({bound}), stages: [])"#
-        ));
+        let result = Pack::parse(&format!("(version: 1, bound: Some({bound}), stages: [])"));
         assert!(
             matches!(result, Err(PackError::Bound(_) | PackError::Syntax(_))),
             "{bound}: {result:?}"

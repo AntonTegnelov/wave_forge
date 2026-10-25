@@ -1,3 +1,7 @@
+# A test that unwraps fails loud at the line that broke; the library and tools name the invariant
+# with `expect` instead.
+allow-unwrap-in-tests = true
+
 # Stages decide by these values, and players on Windows, Linux and macOS have to get the same world
 # (docs/architecture/engine-integration.md, "The same stages on every platform"). The platform's C
 # library rounds these functions differently in the last bit, so the `libm` crate computes them.

@@ -29,7 +29,9 @@ pub struct RowId(pub Vec<u64>);
 /// One row of a table: its id and a value for each of the table's columns, in their order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
+    /// The row's id.
     pub id: RowId,
+    /// A value for each of the table's columns, in their order.
     pub values: Vec<f32>,
 }
 
@@ -38,6 +40,7 @@ pub struct Row {
 pub struct Table {
     /// The columns' names, in the order a row holds their values.
     pub columns: Vec<String>,
+    /// The rows, in the order of their ids.
     pub rows: Vec<Row>,
 }
 
@@ -70,7 +73,9 @@ pub enum Value {
 /// A row the game gives: its own id, and a value for every column of the table.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GivenRow {
+    /// The game's own id for the row.
     pub id: u64,
+    /// A value for every column of the table, by the column's name.
     pub values: BTreeMap<String, Value>,
 }
 

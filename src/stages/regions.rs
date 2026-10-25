@@ -22,8 +22,11 @@ use wfc_core::hash::pcg3d;
 /// value per point for the job to give meaning to, a river's width say.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Curve {
+    /// Which curve it is.
     pub id: CurveId,
+    /// The polyline's points, in world columns along the lattice's x and y.
     pub points: Vec<[f32; 2]>,
+    /// A value per point, for the job to give meaning to.
     pub values: Vec<f32>,
     /// A height in cells per point, for a curve that runs through 3D space, a tunnel say; empty
     /// for a curve on the ground plane, which takes its height from a field where it needs one.
@@ -38,7 +41,12 @@ pub struct Curve {
 )]
 pub enum CurveId {
     /// A region job's curve: the region that made it and its place in that region's list.
-    Region { region: (i32, i32), index: u32 },
+    Region {
+        /// The region that made it, along the lattice's x and y.
+        region: (i32, i32),
+        /// Its place in that region's list, from 0.
+        index: u32,
+    },
     /// A TableCurves stage's curve: the row it stands for.
     Row(RowId),
 }

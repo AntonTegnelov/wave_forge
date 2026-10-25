@@ -14,7 +14,9 @@ use wfc_core::ChunkCoord;
 /// A point's positional id, as a log saves it: the chunk its candidate stood in and its local id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct PointId {
+    /// The chunk's x and y.
     pub chunk: (i32, i32),
+    /// The point's local id within the chunk ([`InstanceId`]).
     pub local: u64,
 }
 
@@ -40,34 +42,52 @@ impl From<PointId> for InstanceId {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum Edit {
     /// A point taken away, a felled tree say, with where it stood, in cells.
-    Remove { point: PointId, at: [f32; 2] },
+    Remove {
+        /// The point taken away.
+        point: PointId,
+        /// Where it stood when it was generated, in cells along the lattice's x and y.
+        at: [f32; 2],
+    },
     /// A point moved from where it stood to `to` and turned to `turn`. It stays in the chunk it
     /// was generated in, so the engine finds it there wherever it now stands.
     Move {
+        /// The point moved.
         point: PointId,
+        /// Where it stood when it was generated, in cells along the lattice's x and y.
         from: [f32; 2],
+        /// Where it now stands, in cells: x and y along the lattice's ground, z its height.
         to: [f32; 3],
+        /// Its turn about its own up, as a fraction of a whole turn.
         turn: f32,
     },
     /// `by` added to a field stage's value at a world column of that stage: ground raised or dug.
     Raise {
+        /// The field stage raised.
         stage: String,
+        /// The world column raised, along the lattice's x and y.
         column: (i64, i64),
+        /// What is added to the stage's value there; negative digs the ground.
         by: f32,
     },
     /// A ball of `radius` cells dug out of a Volume or Carve stage around `at`, in cells along the
     /// lattice's x and y and up: a voxel within a cell of it, or inside it, keeps the lower of its
     /// value and how far outside the ball it is, so the ball is empty.
     Dig {
+        /// The Volume or Carve stage dug.
         stage: String,
+        /// The ball's centre, in cells along the lattice's x and y and up.
         at: [f32; 3],
+        /// The ball's radius, in cells.
         radius: f32,
     },
     /// A ball filled into a volume, as [`Edit::Dig`] digs one: a voxel keeps the higher of its value
     /// and how far inside the ball it is, so the ball is solid.
     Fill {
+        /// The volume stage filled.
         stage: String,
+        /// The ball's centre, in cells along the lattice's x and y and up.
         at: [f32; 3],
+        /// The ball's radius, in cells.
         radius: f32,
     },
 }
@@ -76,6 +96,7 @@ pub enum Edit {
 /// earlier ones, raises of the same column add up, and digs and fills apply in the log's order.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Edits {
+    /// Every edit, oldest first.
     pub log: Vec<Edit>,
 }
 

@@ -17,7 +17,9 @@ use wfc_rules::modules::{Face, NEG_X, NEG_Y, POS_X, POS_Y};
 /// A set of tiles a rule file names: every variant of the modules with a tag, or of one module.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Selector {
+    /// Every variant of every module with this tag.
     Tagged(String),
+    /// Every variant of the module, or the tile, with this name.
     Named(String),
 }
 
@@ -41,14 +43,19 @@ impl Selector {
 /// Why a town could not be solved.
 #[derive(Debug, thiserror::Error)]
 pub enum TownError {
+    /// The request names a rule set the solver was not given; with the name.
     #[error("no rule set is named {0:?}")]
     UnknownRules(String),
+    /// A selector names no tile of the rule file.
     #[error("the rule file has no tiles for {0:?}")]
     NoTiles(Selector),
+    /// Chunks are under 3 cells tall, too few for a street, a roof and air above; with their
+    /// height in cells.
     #[error(
         "a town needs at least 3 layers, a street, a roof and air above, but chunks are {0} tall"
     )]
     TooShallow(u32),
+    /// Generating the town's world failed.
     #[error(transparent)]
     Generation(#[from] crate::Error),
     /// The rule set could not place some chunks of the town, even with repairs.
@@ -102,10 +109,13 @@ pub fn town_prior(
 pub struct TownRequest<'a> {
     /// The rule set, by the name the solver was given it under.
     pub rules: &'a str,
+    /// Every choice in the town derives from this.
     pub seed: u64,
     /// Chunks along the lattice's x and y.
     pub size: (u32, u32),
+    /// The tiles the lowest layer may hold; any tile when `None`.
     pub bottom: Option<&'a Selector>,
+    /// The tiles the highest layer may hold; any tile when `None`.
     pub top: Option<&'a Selector>,
     /// The columns the town is not built in, if a mask leaves any out.
     pub outside: Option<Outside<'a>>,
@@ -116,15 +126,20 @@ pub struct TownRequest<'a> {
 /// `ground` selects if it names any.
 #[derive(Clone, Copy, Debug)]
 pub struct Outside<'a> {
+    /// The columns left out, in cells along the lattice's x and y from the town's lowest corner.
     pub columns: &'a [(u32, u32)],
+    /// The tiles a left-out column holds, on its lowest layer too unless `ground` names some.
     pub tiles: &'a Selector,
+    /// The tiles a left-out column holds on its lowest layer; `tiles` when `None`.
     pub ground: Option<&'a Selector>,
 }
 
 /// A solved town: each chunk's tiles, row by row with x fastest, from the town's lowest corner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Town {
+    /// Chunks along the lattice's x and y.
     pub size: (u32, u32),
+    /// One tile per cell of each chunk, in row-major order; the chunks row by row with x fastest.
     pub chunks: Vec<Arc<[u16]>>,
 }
 

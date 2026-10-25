@@ -69,7 +69,7 @@ fn a_parameter_changed_after_the_focus_moved_regenerates_as_a_fresh_runtime_woul
     let expected = fresh(|runtime| {
         runtime.set_params(&values).expect("a value in range");
     });
-    assert!(heights(&runtime) == expected);
+    assert_eq!(heights(&runtime), expected);
 }
 
 #[test]
@@ -88,5 +88,5 @@ fn an_input_raised_after_the_focus_moved_regenerates_as_a_fresh_runtime_would() 
     let expected = fresh(|runtime| {
         runtime.set_edits(&edits).expect("edits");
     });
-    assert!(heights(&runtime) == expected);
+    assert_eq!(heights(&runtime), expected);
 }

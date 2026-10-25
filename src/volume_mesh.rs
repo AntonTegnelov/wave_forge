@@ -29,6 +29,7 @@ use wfc_core::ChunkCoord;
 /// One chunk's surface, ready for an engine to draw and to collide with.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VolumeMesh {
+    /// The chunk the surface belongs to.
     pub chunk: ChunkCoord,
     /// Relative to the chunk's corner on the ground plane (the engine's x and z), with the height
     /// absolute.

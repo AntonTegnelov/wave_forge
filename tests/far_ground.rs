@@ -179,7 +179,7 @@ fn every_far_ground_a_near_ground_changes_is_one_that_reads_it() {
     // vertex of the coarse chunk diagonally beyond it.
     let fine = ChunkCoord::new(SCALE as i32 - 1, SCALE as i32 - 1, 0);
     let mesh = ground(fine, |at| runtime.field("near", at), CELL).expect("fields around");
-    let with: BTreeMap<ChunkCoord, GroundMesh> = [(fine, mesh)].into_iter().collect();
+    let with: BTreeMap<ChunkCoord, GroundMesh> = BTreeMap::from([(fine, mesh)]);
 
     let reading = far_chunks_reading(fine, SCALE);
 

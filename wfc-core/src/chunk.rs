@@ -13,8 +13,11 @@ pub type WorldCell = [i32; 3];
 /// The cells of one chunk.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ChunkShape {
+    /// Cells along x.
     pub x: u32,
+    /// Cells along y.
     pub y: u32,
+    /// Cells along z.
     pub z: u32,
 }
 
@@ -51,8 +54,11 @@ impl ChunkShape {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChunkCoord {
+    /// The chunk's coordinate along x, in chunks.
     pub x: i32,
+    /// The chunk's coordinate along y, in chunks.
     pub y: i32,
+    /// The chunk's coordinate along z, in chunks.
     pub z: i32,
 }
 
@@ -120,8 +126,11 @@ impl ChunkCoord {
 /// The cells of a region: a chunk plus its halo.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RegionShape {
+    /// Cells along x, the halo on both sides included.
     pub x: u32,
+    /// Cells along y, the halo on both sides included.
     pub y: u32,
+    /// Cells along z, the halo on both sides included.
     pub z: u32,
     halo: [u32; 3],
 }

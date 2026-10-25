@@ -45,12 +45,25 @@ pub enum ModelProblem {
     /// The model has no triangles.
     Empty,
     /// A vertex lies outside the cell (or above a stair's landing).
-    OutsideCell { vertex: [f32; 3] },
+    OutsideCell {
+        /// The first vertex outside the cell, in the model's frame.
+        vertex: [f32; 3],
+    },
     /// A walkable side has no surface at [`WALK_HEIGHT`] just inside it; `heights` are the
     /// surfaces found there, highest first.
-    NoWalkingSurface { side: String, heights: Vec<f32> },
+    NoWalkingSurface {
+        /// The side, `"+X"`, `"-X"`, `"+Z"` or `"-Z"`.
+        side: String,
+        /// The Y heights of the surfaces found just inside the side, highest first.
+        heights: Vec<f32>,
+    },
     /// A vertex touches a side that faces air.
-    TouchesAir { side: String, vertex: [f32; 3] },
+    TouchesAir {
+        /// The side, `"+X"`, `"-X"`, `"+Z"` or `"-Z"`.
+        side: String,
+        /// The first vertex touching the side, in the model's frame.
+        vertex: [f32; 3],
+    },
 }
 
 impl fmt::Display for ModelProblem {

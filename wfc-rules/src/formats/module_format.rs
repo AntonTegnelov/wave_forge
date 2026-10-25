@@ -146,13 +146,16 @@ const fn yes() -> bool {
 /// ([`crate::kit_check`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleFaces {
+    /// The module's name in the file.
     pub name: String,
     /// Faces along `+x`, `-x`, `+y` and `-y` of the lattice, which a Y-up model's `+X`, `-X`, `+Z`
     /// and `-Z` sides are.
     pub sides: [String; 4],
     /// Whether walkers cross each side, as its face says.
     pub walkable: [bool; 4],
+    /// The face on the module's top, along `+z`.
     pub up: String,
+    /// The face on the module's bottom, along `-z`.
     pub down: String,
 }
 

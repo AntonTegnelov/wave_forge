@@ -1,5 +1,8 @@
 //! FastNoiseLite 1.1.0's 3D noise and 3D domain warp, as Godot's `get_noise_3d` computes them.
 
+// Constants and tables keep FastNoiseLite's digits, so they can be checked against its source.
+#![allow(clippy::unreadable_literal)]
+
 use super::{
     PRIME_X, PRIME_Y, cubic_lerp, fast_abs, fast_floor, fast_round, interp_hermite, interp_quintic,
     lerp,
