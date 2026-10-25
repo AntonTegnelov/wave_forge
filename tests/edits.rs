@@ -1,6 +1,7 @@
 //! Edits: a felled tree, a moved one and raised ground, applied as chunks are generated, surviving
 //! eviction and regeneration, and regenerating only what they reach.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use wave_forge::stages::{Edit, Edits, Pack, Point, PointId, Runtime, StageError};
 use wave_forge::{ChunkCoord, FocusPoint};
@@ -99,7 +100,14 @@ fn a_moved_tree_stands_where_it_was_put_in_the_chunk_it_came_from() {
 fn raised_ground_reaches_what_reads_it_and_nothing_further() {
     let mut runtime = runtime();
     let origin = ChunkCoord::new(0, 0, 0);
-    around(&mut runtime, origin);
+    // Every stage held well beyond the raise's reach, so a drop that went too far shows.
+    runtime
+        .request(
+            &[FocusPoint::new(origin, 3)],
+            &["ground", "smooth", "trees"],
+        )
+        .expect("stages");
+    runtime.run_until_idle().expect("the stages run");
     let (ground, smooth) = (
         value(&runtime, "ground", 5, 5),
         value(&runtime, "smooth", 5, 5),
@@ -116,15 +124,23 @@ fn raised_ground_reaches_what_reads_it_and_nothing_further() {
 
     // Staleness is kept per chunk: the raise dirties ground chunk (0, 0), and every chunk whose
     // reach covers it regenerates, a blur's neighbours and the trees standing on it, no further.
-    let ground_only = dropped
-        .iter()
-        .filter(|(stage, _)| stage == "ground")
-        .all(|(_, chunk)| *chunk == origin);
-    let near = dropped
-        .iter()
-        .all(|(_, chunk)| chunk.x.abs() <= 1 && chunk.y.abs() <= 1);
-    assert!(ground_only && near, "{dropped:?}");
-    assert!(dropped.contains(&("smooth".to_owned(), origin)));
+    let of = |stage: &str| -> BTreeSet<ChunkCoord> {
+        dropped
+            .iter()
+            .filter(|(name, _)| name == stage)
+            .map(|&(_, chunk)| chunk)
+            .collect()
+    };
+    let neighbours: BTreeSet<ChunkCoord> = (-1..=1)
+        .flat_map(|y| (-1..=1).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    assert_eq!(of("ground"), BTreeSet::from([origin]));
+    // A blur of radius 2 reads 2 cells into each neighbour.
+    assert_eq!(of("smooth"), neighbours);
+    assert!(
+        of("trees").contains(&origin) && of("trees").is_subset(&neighbours),
+        "{dropped:?}"
+    );
     assert_eq!(value(&runtime, "ground", 5, 5), ground + 7.0);
     assert!((value(&runtime, "smooth", 5, 5) - (smooth + 7.0 / 25.0)).abs() < 1e-4);
 }

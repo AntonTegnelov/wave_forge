@@ -131,6 +131,7 @@ fn a_piece_stands_on_the_ground_at_its_middle() {
 
     let pieces = all_pieces(&[road]);
 
+    assert!(!pieces.is_empty());
     for (_, piece) in &pieces {
         let column = [
             (piece.at[0] / CELL[0]).floor() as i64,

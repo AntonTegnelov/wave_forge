@@ -19,25 +19,47 @@ const DISK: &str = r#"(
     ],
 )"#;
 
-/// Whether any cell of `chunk` lies within 40 cells of the origin.
+/// Whether any of `chunk`, from its corner up to but not including the next chunk's, lies within 40
+/// cells of the origin.
 fn meets_disk(chunk: ChunkCoord) -> bool {
+    // Along one axis: the nearest coordinate to 0 the chunk holds, or the edge it comes as near to
+    // as one likes without holding, and whether it holds it.
     let near = |at: i32| {
         let (low, high) = (at as f32 * 8.0, at as f32 * 8.0 + 8.0);
-        0.0_f32.clamp(low, high)
+        if high <= 0.0 {
+            (high, false)
+        } else {
+            (low.max(0.0), true)
+        }
     };
-    libm::hypotf(near(chunk.x), near(chunk.y)) <= 40.0
+    let ((x, held_x), (y, held_y)) = (near(chunk.x), near(chunk.y));
+    let distance = libm::hypotf(x, y);
+    if held_x && held_y {
+        distance <= 40.0
+    } else {
+        distance < 40.0
+    }
 }
 
 #[test]
 fn no_target_chunk_wholly_outside_the_bound_is_generated() {
     let mut runtime = Runtime::new(Arc::new(Pack::parse(DISK).expect("a valid pack")), 3, SIZE);
-    let focus = FocusPoint::new(ChunkCoord::new(5, 0, 0), 3);
+    // East and west of the disk: chunk 5 holds x = 40 on the circle, and chunk -6 ends there
+    // without holding it.
+    let foci = [
+        FocusPoint::new(ChunkCoord::new(5, 0, 0), 3),
+        FocusPoint::new(ChunkCoord::new(-5, 0, 0), 3),
+    ];
 
-    runtime.request(&[focus], &["smooth"]).expect("a stage");
+    runtime.request(&foci, &["smooth"]).expect("a stage");
     runtime.run_until_idle().expect("the stages run");
 
     let asked: Vec<ChunkCoord> = (-3..=3)
-        .flat_map(|y| (2..=8).map(move |x| ChunkCoord::new(x, y, 0)))
+        .flat_map(|y| {
+            (-8..=-2)
+                .chain(2..=8)
+                .map(move |x| ChunkCoord::new(x, y, 0))
+        })
         .collect();
     assert!(asked.iter().any(|&chunk| !meets_disk(chunk)));
     for chunk in asked {
@@ -117,7 +139,7 @@ fn a_finite_world_computes_its_region_jobs_before_play_and_keeps_them() {
         runtime.run_until_idle().expect("the stages run");
     }
 
-    // Chunks -5 to 4 meet the disk along each axis, so regions -2 to 1 of four chunks, less the
+    // Chunks -5 to 5 meet the disk along each axis, so regions -2 to 1 of four chunks, less the
     // four corners, which no chunk of the disk reaches.
     assert_eq!(before_play, 12);
     assert_eq!(
@@ -160,7 +182,7 @@ fn a_bound_that_holds_nothing_is_refused() {
             r#"(version: 1, bound: Some({bound}), stages: [])"#
         ));
         assert!(
-            matches!(result, Err(PackError::Bound(_) | PackError::Syntax(_))),
+            matches!(result, Err(PackError::Bound(_))),
             "{bound}: {result:?}"
         );
     }

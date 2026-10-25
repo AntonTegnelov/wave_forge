@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use wave_forge::stages::{Pack, Point, Rejection, Runtime};
+use wave_forge::stages::{MAX_SCATTER_SLOTS, Pack, Point, Rejection, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 /// Trees whose density falls from 1 at x = 0 to 0 at x = 160 cells, with no spacing, so the
@@ -118,11 +118,11 @@ fn a_clump_is_of_one_size() {
         .collect();
 
     // A group's members share their candidate's chunk, cell and slot in the id.
-    let mut clumps: BTreeMap<(ChunkCoord, u32, u64), Vec<f32>> = BTreeMap::new();
+    let mut clumps: BTreeMap<(ChunkCoord, u32, u16), Vec<f32>> = BTreeMap::new();
     for fern in &ferns {
-        let candidate = (fern.id.local >> 32 & 0xFFFF) / 256;
+        let candidate = fern.id.slot() / MAX_SCATTER_SLOTS as u16;
         clumps
-            .entry((fern.id.chunk, fern.id.local as u32, candidate))
+            .entry((fern.id.chunk, fern.id.cell(), candidate))
             .or_default()
             .push(fern.scale);
     }

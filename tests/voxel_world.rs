@@ -202,8 +202,26 @@ fn ore_lies_in_the_rock_and_trees_on_the_top() {
 
     let (mut ore, mut trees) = (0, 0);
     for &chunk in &chunks {
+        let terrain = runtime.volume("terrain", chunk).expect("generated");
         for stage in ["coal", "iron"] {
-            ore += runtime.points(stage, chunk).expect("generated").len();
+            for point in runtime.points(stage, chunk).expect("generated") {
+                let [x, y, z] = point.position;
+                let (cx, cy) = (
+                    (x.floor() as i64 - i64::from(chunk.x) * 8) as u32,
+                    (y.floor() as i64 - i64::from(chunk.y) * 8) as u32,
+                );
+                // The terrain between the voxels below and above the point, as its surface runs.
+                let along = z - terrain.bottom as f32 - 0.5;
+                let below = along.floor().max(0.0) as u32;
+                let above = (below + 1).min(terrain.size[2] - 1);
+                let t = along - along.floor();
+                let (low, high) = (terrain.get(cx, cy, below), terrain.get(cx, cy, above));
+                assert!(
+                    low + (high - low) * t > 0.0,
+                    "{stage} {point:?} in the open"
+                );
+                ore += 1;
+            }
         }
         let surface = runtime.field("surface", chunk).expect("generated");
         for tree in runtime.points("trees", chunk).expect("generated") {

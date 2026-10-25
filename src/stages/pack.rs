@@ -179,7 +179,14 @@ impl Bound {
                     centre.0.clamp(min[0], max[0]),
                     centre.1.clamp(min[1], max[1]),
                 ];
-                libm::hypotf(nearest[0] - centre.0, nearest[1] - centre.1) <= radius
+                let distance = libm::hypotf(nearest[0] - centre.0, nearest[1] - centre.1);
+                // A nearest point on a far edge is not in the area, only points as near as one
+                // likes to it, so the area reaches the disk only if that edge lies inside it.
+                if centre.0 >= max[0] || centre.1 >= max[1] {
+                    distance < radius
+                } else {
+                    distance <= radius
+                }
             }
             Self::Rect {
                 min: low,

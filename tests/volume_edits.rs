@@ -134,8 +134,18 @@ fn digs_and_fills_apply_in_the_order_they_were_made() {
 #[test]
 fn a_dig_stales_only_its_chunks_and_survives_leaving_and_coming_back() {
     let mut runtime = runtime();
-    let before = generate(&mut runtime, HERE);
     let far = ChunkCoord::new(9, 9, 0);
+    // Beyond the ball's reach, which is its radius and the carve's margin, so its neighbour at
+    // cells 16 to 23 is reached and the next is not.
+    let beside = ChunkCoord::new(3, 1, 0);
+    // All three held when the dig is made, so a dig that dropped more than it reaches shows.
+    let held: Vec<FocusPoint> = [HERE, beside, far]
+        .iter()
+        .map(|&chunk| FocusPoint::new(chunk, 0))
+        .collect();
+    runtime.request(&held, &["ground"]).expect("a stage");
+    runtime.run_until_idle().expect("the stages run");
+    let before = runtime.volume("ground", HERE).expect("generated").clone();
 
     let stale = runtime
         .set_edits(&Edits {
@@ -150,7 +160,7 @@ fn a_dig_stales_only_its_chunks_and_survives_leaving_and_coming_back() {
     assert!(
         stale
             .iter()
-            .all(|(_, chunk)| (0..=2).contains(&chunk.x) && (0..=2).contains(&chunk.y)),
+            .all(|(_, chunk)| *chunk != far && *chunk != beside),
         "{stale:?}"
     );
     assert_ne!(arrived, before);

@@ -553,6 +553,17 @@ fn a_repair_reports_every_chunk_it_rewrote() {
             "{chunk:?} was generated and then rewritten by the repair: {reported:?}"
         );
     }
+    // A chunk the repair did not touch is reported once, when it was generated, so a game rebuilds
+    // nothing for it again.
+    for (chunk, &times) in &reported {
+        if *chunk != STUBBORN && !rewritten.contains(chunk) {
+            assert_eq!(times, 1, "{chunk:?} lies outside the repair: {reported:?}");
+        }
+    }
+    assert!(
+        reported.len() > rewritten.len() + 1,
+        "chunks outside the repair were generated too: {reported:?}"
+    );
     let stats = world.stats();
     assert_eq!(stats.repaired, 1);
     assert_eq!(stats.rewritten_by_repair, rewritten.len() as u32);

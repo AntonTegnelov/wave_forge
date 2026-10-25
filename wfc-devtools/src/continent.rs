@@ -94,10 +94,12 @@ const fn hash(a: u64, b: u64, c: u64) -> u64 {
 
 /// The continent's history as a game might simulate it over the map before play: in every square
 /// of 64 cells, up to three places tried, and the first that suits each culture kept, where its
-/// biome is the culture's and the ground is dry, gentle and below the peaks. Each culture founds
-/// its first settlement before any other is chosen, so one whose land is scarce, a beach or a
-/// highland, still has one; then the rest in the order of their hashes, each at least 128 cells
-/// from every settlement kept before it. A settlement's population, founding year and fate are
+/// biome is the culture's and the ground is dry, gentle and below the peaks. Each culture's first
+/// suited place is tried before any other, so one whose land is scarce, a beach or a highland, is
+/// not crowded out by the cultures with more; then the rest in the order of their hashes. Every
+/// place, a first too, is kept only at least 128 cells from every settlement kept before it, so a
+/// culture whose first lies that near an earlier culture's first is settled from its later places
+/// or not at all. A settlement's population, founding year and fate are
 /// drawn from a hash, the oldest the likeliest to have fallen, and its size, two to six chunks a
 /// side, from its population.
 ///

@@ -123,7 +123,7 @@ fn a_stage_whose_painting_was_never_given_fails_by_name() {
 }
 
 #[test]
-fn a_new_painting_stales_what_read_the_old_and_shows_where_it_changed() {
+fn a_new_painting_stales_what_read_the_old() {
     let mut runtime = runtime();
     runtime
         .give_painting("map", painting())

@@ -170,7 +170,19 @@ fn a_given_row_is_checked_against_its_columns_and_nothing_changes_on_an_error() 
         facts.clone().give("systems", Vec::new()),
     ];
     let unknown = facts.give("towns", Vec::new());
+    // A refusal of the facts themselves, its first row good and its second a duplicate, leaves
+    // the table as it was, not half given.
+    let before = table(&facts, "villages").clone();
+    let in_place = facts.give(
+        "villages",
+        vec![village(2, 1.0, "hill"), village(2, 3.0, "river")],
+    );
 
+    assert!(
+        matches!(&in_place, Err(StageError::Table { table, .. }) if table == "villages"),
+        "{in_place:?}"
+    );
+    assert_eq!(table(&facts, "villages"), &before);
     for refusal in refusals {
         assert!(
             matches!(&refusal, Err(StageError::Table { table, .. }) if table == "villages" || table == "systems"),

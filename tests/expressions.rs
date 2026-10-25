@@ -3,7 +3,7 @@
 //! Each test builds a pack, generates an area, and compares every column's value with the same
 //! formula computed directly from the column's coordinates or from other stages' values. The last
 //! test writes the ring world's height (`examples/rings.world.ron`, for G7) as one Field stage and
-//! checks it against the formula computed from its noises.
+//! checks it against the formula computed from its noises, and against the example's own height.
 
 use std::sync::Arc;
 use wave_forge::stages::{
@@ -352,9 +352,26 @@ fn a_ring_worlds_height_as_one_field_stage_matches_its_formula() {
         ));
     }
     let targets = ["height", "continent", "hills", "detail", "rim"];
-    let (runtime, columns) = generate(stages, &targets, ChunkCoord::new(6, 0, 0), 7);
+    let (centre, radius) = (ChunkCoord::new(6, 0, 0), 7);
+    let (runtime, columns) = generate(stages, &targets, centre, radius);
+    // The example itself, its height built over stages of its own, so the expression here is the
+    // example's and not a copy that could drift from it.
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/examples/rings.world.ron"
+    ))
+    .expect("the ring-world test pack");
+    let mut example = Runtime::new(
+        Arc::new(Pack::parse(&text).expect("a valid pack")),
+        SEED,
+        SIZE,
+    );
+    example
+        .request(&[FocusPoint::new(centre, radius)], &["height"])
+        .expect("a height stage");
+    example.run_until_idle().expect("the stages run");
 
-    let (mut flat, mut beyond) = (0, 0);
+    let (mut flat, mut beyond, mut compared) = (0, 0, 0);
     for column in columns {
         let n = |name: &str| value(&runtime, name, column);
         let (x, y) = (column.0 as f32 + 0.5, column.1 as f32 + 0.5);
@@ -372,6 +389,21 @@ fn a_ring_worlds_height_as_one_field_stage_matches_its_formula() {
         let got = value(&runtime, "height", column);
 
         assert_close(got, expected, &format!("column {column:?}"));
+        // The example is bounded, and generates no chunk wholly outside its bound.
+        let s = i64::from(SIZE[0]);
+        let chunk = ChunkCoord::new(
+            column.0.div_euclid(s) as i32,
+            column.1.div_euclid(s) as i32,
+            0,
+        );
+        if example.field("height", chunk).is_some() {
+            assert_close(
+                value(&example, "height", column),
+                got,
+                &format!("the example's height at {column:?}"),
+            );
+            compared += 1;
+        }
         if flatten > 0.0 {
             flat += 1;
         }
@@ -384,4 +416,5 @@ fn a_ring_worlds_height_as_one_field_stage_matches_its_formula() {
         flat > 0 && beyond > 0,
         "the area holds flattened land ({flat}) and the edge ({beyond})"
     );
+    assert!(compared > 0, "the example's height was compared nowhere");
 }

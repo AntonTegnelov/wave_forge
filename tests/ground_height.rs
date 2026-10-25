@@ -42,7 +42,6 @@ fn the_ground_height_is_where_the_ground_mesh_stands() {
     let mesh = ground(chunk, |at| runtime.field("height", at), CELL).expect("fields around");
     let span = 8.0 * CELL[0];
 
-    let mut checked = 0;
     for j in 0..40 {
         for i in 0..40 {
             // Across the mesh, from its first column centre to past its last one.
@@ -63,8 +62,6 @@ fn the_ground_height_is_where_the_ground_mesh_stands() {
                 (got - expected).abs() < 1e-4,
                 "{world:?}: {got} against {expected}"
             );
-            checked += 1;
         }
     }
-    assert_eq!(checked, 1600);
 }

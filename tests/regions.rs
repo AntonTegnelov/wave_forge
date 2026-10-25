@@ -5,8 +5,10 @@
 //! way, so neighbouring regions meet at the same point without reading each other. The tests check
 //! the curves meet at every border and come out the same in any generation order, that a job is
 //! retried with new hashes until it is accepted and refused with its log when its budget runs out,
-//! that a finite world is computed once, and that a job cannot read beyond its halo.
+//! that a region is computed once while requests stay in it, and that a job cannot read beyond its
+//! halo. How a finite world keeps its regions is in `bound.rs`.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wave_forge::stages::regions::{Attempt, Curve, CurveId, Edge, RegionInput, RegionJob};
@@ -169,6 +171,8 @@ fn a_chunk_holds_the_curves_that_pass_through_it() {
         .expect("a stage");
     runtime.run_until_idle().expect("the stages run");
 
+    // Every curve any chunk lists, and the chunks that list it.
+    let mut listed: BTreeMap<CurveId, (Vec<[f32; 2]>, BTreeSet<ChunkCoord>)> = BTreeMap::new();
     for y in -2..=2 {
         for x in -2..=2 {
             let chunk = ChunkCoord::new(x, y, 0);
@@ -196,6 +200,37 @@ fn a_chunk_holds_the_curves_that_pass_through_it() {
                     "{:?} is listed in {chunk:?} but passes nowhere near it",
                     curve.id
                 );
+                listed
+                    .entry(curve.id.clone())
+                    .or_insert_with(|| (curve.points.clone(), BTreeSet::new()))
+                    .1
+                    .insert(chunk);
+            }
+        }
+    }
+    // And the other way: a chunk of the area a curve passes through lists it. A curve ends on its
+    // region's edge, which is a chunk's edge too, so the points sampled lie inside its segments
+    // and off the chunks' edges.
+    assert!(!listed.is_empty(), "no chunk holds a curve");
+    for (id, (points, chunks)) in &listed {
+        for pair in points.windows(2) {
+            for step in 0..16 {
+                let t = (step as f32 + 0.5) / 16.0;
+                let p = [
+                    pair[0][0] + (pair[1][0] - pair[0][0]) * t,
+                    pair[0][1] + (pair[1][1] - pair[0][1]) * t,
+                ];
+                if p.iter().any(|&at| at.rem_euclid(8.0) == 0.0) {
+                    continue;
+                }
+                let through =
+                    ChunkCoord::new((p[0] / 8.0).floor() as i32, (p[1] / 8.0).floor() as i32, 0);
+                if (-2..=2).contains(&through.x) && (-2..=2).contains(&through.y) {
+                    assert!(
+                        chunks.contains(&through),
+                        "{id:?} passes through {through:?} at {p:?}, which does not list it"
+                    );
+                }
             }
         }
     }
@@ -313,9 +348,10 @@ fn a_region_is_given_up_on_with_every_reason_when_its_budget_runs_out() {
 }
 
 #[test]
-fn a_finite_world_is_one_region_computed_once() {
+fn a_region_is_computed_once_while_requests_stay_in_it() {
     let runs = Arc::new(AtomicUsize::new(0));
-    // Every attempt is accepted: an even number is always drawn by a budget this large.
+    // A region of 4 by 4 chunks, so every request below lies in region (0, 0). Picky refuses the
+    // odd hashes, and a budget this large draws an even one, so the region is accepted in the end.
     let mut runtime = runtime(vec![height(), region("picky", 4, 0, 1024)])
         .with_region_job("picky", Picky(Arc::clone(&runs)));
 
@@ -336,7 +372,7 @@ fn a_finite_world_is_one_region_computed_once() {
     assert_eq!(
         runs.load(Ordering::SeqCst),
         attempts,
-        "the world was computed once"
+        "the region was computed once"
     );
 }
 

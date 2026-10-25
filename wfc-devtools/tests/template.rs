@@ -36,12 +36,20 @@ fn rooms() -> Template<'static> {
 
 /// Every `n` by `n` window of `template`, row by row, in the order first met.
 fn windows(template: Template<'_>, n: usize, wrap: bool) -> Vec<Vec<u32>> {
+    window_counts(template, n, wrap)
+        .into_iter()
+        .map(|(window, _)| window)
+        .collect()
+}
+
+/// Each distinct window, as `windows` lists them, with how many times the template holds it.
+fn window_counts(template: Template<'_>, n: usize, wrap: bool) -> Vec<(Vec<u32>, usize)> {
     let (across, up) = if wrap {
         (template.width, template.height)
     } else {
         (template.width - n + 1, template.height - n + 1)
     };
-    let mut out: Vec<Vec<u32>> = Vec::new();
+    let mut out: Vec<(Vec<u32>, usize)> = Vec::new();
     for y in 0..up {
         for x in 0..across {
             let window: Vec<u32> = (0..n * n)
@@ -50,8 +58,9 @@ fn windows(template: Template<'_>, n: usize, wrap: bool) -> Vec<Vec<u32>> {
                     template.cells[wy * template.width + wx]
                 })
                 .collect();
-            if !out.contains(&window) {
-                out.push(window);
+            match out.iter_mut().find(|(seen, _)| *seen == window) {
+                Some((_, count)) => *count += 1,
+                None => out.push((window, 1)),
             }
         }
     }
@@ -81,13 +90,17 @@ fn each_distinct_window_is_a_module_weighted_by_how_often_the_template_holds_it(
     let text = learn(rooms(), 3, true).expect("a template that fits");
 
     let modules = compiled(&text);
-    let windows = windows(rooms(), 3, true);
+    let windows = window_counts(rooms(), 3, true);
 
     assert_eq!(modules.prototypes.len(), windows.len());
     let total: f32 = modules.prototypes.iter().map(|p| p.weight).sum();
     assert_eq!(total, 64.0, "every window of a tiling template counts once");
-    for (index, window) in windows.iter().enumerate() {
+    for (index, (window, count)) in windows.iter().enumerate() {
         assert_eq!(value(&modules, index), window[0], "pattern {index}");
+        assert_eq!(
+            modules.prototypes[index].weight, *count as f32,
+            "pattern {index} is held {count} times"
+        );
     }
 }
 

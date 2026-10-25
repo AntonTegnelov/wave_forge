@@ -62,6 +62,7 @@ fn columns(stage: &str) -> BTreeMap<(i64, i64), f32> {
 fn flat_ground_hides_none_of_the_sky() {
     let open = columns("open");
 
+    assert_eq!(open.len(), 64 * 64, "every column of the 8 by 8 chunks");
     assert!(open.values().all(|&value| value == 0.0), "{open:?}");
 }
 

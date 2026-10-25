@@ -337,10 +337,15 @@ fn a_coarse_stage_is_generated_once_for_the_many_fine_chunks_it_covers() {
         .expect("a stage")
         .1;
 
+    // Each coarse chunk the runtime holds was generated once, however many fine chunks read it.
+    let held = (-4..=4)
+        .flat_map(|y| (-4..=4).map(move |x| ChunkCoord::new(x, y, 0)))
+        .filter(|&chunk| runtime.categories("biome", chunk).is_some())
+        .count();
     assert_eq!(fine.products, 81, "9 by 9 fine chunks");
-    assert!(
-        coarse.products <= 9,
-        "a coarse chunk covers 8 by 8 fine ones: {}",
-        coarse.products
+    assert!(held > 0);
+    assert_eq!(
+        coarse.products as usize, held,
+        "a coarse chunk covers 8 by 8 fine ones, each generated once"
     );
 }

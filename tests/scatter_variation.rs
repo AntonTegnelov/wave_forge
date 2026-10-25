@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use wave_forge::stages::{Pack, PackError, Point, Runtime};
+use wave_forge::stages::{MAX_SCATTER_SLOTS, Pack, PackError, Point, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const PACK: &str = r#"(
@@ -172,12 +172,12 @@ fn a_group_is_of_one_kind() {
 
     // A group's members share their candidate's chunk, cell and slot in the id; the slot's low
     // byte is the member's place in the group.
-    let mut by_candidate: BTreeMap<(ChunkCoord, u32, u64), Vec<&Point>> = BTreeMap::new();
+    let mut by_candidate: BTreeMap<(ChunkCoord, u32, u16), Vec<&Point>> = BTreeMap::new();
     for point in &mixed {
         let id = point.id;
-        let candidate = (id.local >> 32 & 0xFFFF) / 256;
+        let candidate = id.slot() / MAX_SCATTER_SLOTS as u16;
         by_candidate
-            .entry((id.chunk, id.local as u32, candidate))
+            .entry((id.chunk, id.cell(), candidate))
             .or_default()
             .push(point);
     }

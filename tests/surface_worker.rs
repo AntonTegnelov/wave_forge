@@ -83,13 +83,19 @@ fn only_a_chunks_newest_request_is_answered_and_a_cancelled_one_never_is() {
     let (kept, cancelled) = (ChunkCoord::new(0, 0, 0), ChunkCoord::new(1, 0, 0));
     let mut worker = SurfaceWorker::spawn();
 
+    let sentinel = ChunkCoord::new(-1, 0, 0);
+
     worker.build(kept, around(&runtime, kept), [1.0; 3]);
     worker.build(kept, around(&runtime, kept), VOXEL);
     worker.build(cancelled, around(&runtime, cancelled), VOXEL);
     worker.cancel(cancelled);
+    // The jobs run in order, so once the sentinel behind them is answered the cancelled job has
+    // been built too, and its answer had its chance to come back.
+    worker.build(sentinel, around(&runtime, sentinel), VOXEL);
     let built = finished(&mut worker);
 
-    assert_eq!(built.len(), 1);
+    let chunks: Vec<ChunkCoord> = built.iter().map(|mesh| mesh.chunk).collect();
+    assert_eq!(chunks, vec![kept, sentinel]);
     assert_eq!(
         Some(&built[0]),
         volume_mesh(kept, |at| runtime.volume("caves", at), VOXEL).as_ref()
