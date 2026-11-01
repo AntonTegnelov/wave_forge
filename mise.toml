@@ -1,0 +1,25 @@
+[tools]
+rust = { version = "1.98.1", components = "clippy,rustfmt,rust-analyzer" }
+gh = "latest"
+
+[env]
+# The old container had no EGL; NVIDIA's EGL in the LXC makes wgpu's GL probe panic (BadAccess).
+__EGL_VENDOR_LIBRARY_DIRS = "/nonexistent"
+WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER = "1"
+# Bevy at 8 parallel rustc jobs thrashes the dev host's 4 GB container; 4 fits.
+CARGO_BUILD_JOBS = "4"
+
+[tasks.build]
+run = "cargo build --workspace"
+
+[tasks.test]
+run = "cargo test --workspace"
+
+[tasks."test:godot"]
+run = "cargo test --manifest-path wave_forge_godot/Cargo.toml"
+
+[tasks."test:bevy"]
+run = "cargo test --manifest-path wave_forge_bevy/Cargo.toml"
+
+[tasks.run]
+run = "cargo run -p wfc-devtools --release --bin wave-forge --"
