@@ -76,6 +76,8 @@ pub fn volume_height<'a>(
     surface: impl Fn(ChunkCoord) -> Option<&'a VolumeMesh>,
     cell_size: [f32; 3],
 ) -> Option<f32> {
+    // How far outside a triangle, in barycentric weight, a point still counts as on it.
+    const EDGE: f32 = -1e-5;
     let size = [
         columns[0] as f32 * cell_size[0],
         columns[1] as f32 * cell_size[2],
@@ -99,7 +101,6 @@ pub fn volume_height<'a>(
                 let wb = ((x - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (z - a[2])) / area;
                 let wc = ((b[0] - a[0]) * (z - a[2]) - (x - a[0]) * (b[2] - a[2])) / area;
                 let wa = 1.0 - wb - wc;
-                const EDGE: f32 = -1e-5;
                 if wa < EDGE || wb < EDGE || wc < EDGE {
                     continue;
                 }

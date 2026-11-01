@@ -50,7 +50,7 @@ pub struct PackFile {
 
 /// A sound the terrain makes ([`PackFile::ambience`]): the key a game maps to a sound, and where
 /// it plays.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AmbienceDef {
     /// The key a game maps to a sound: not empty, and no other ambient sound's.
@@ -60,7 +60,7 @@ pub struct AmbienceDef {
 }
 
 /// Where an ambient sound plays.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub enum AmbienceKind {
     /// Along the curves of a Rivers, Region or TableCurves stage over the `height` field, spaced by
@@ -307,7 +307,7 @@ pub struct AuthoredRow {
 
 /// What a given table's column holds. Every value is a number to the expressions that read it; a
 /// name is its index in the list.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Column {
     /// A number.
     Number,
@@ -891,7 +891,7 @@ pub enum StageKind {
 /// A piece an Assemble stage grows from ([`StageKind::Assemble`]): a box of cells a prefab fills,
 /// which an engine binds a scene to by its name, authored at turn 0 with its footprint centred on
 /// its origin and its floor at the origin's height.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Piece {
     /// The name an engine binds a scene to and the stage's `start` names, which no other piece of
@@ -1209,7 +1209,7 @@ pub struct Biome {
 /// A Carve stage's levelled sites: in the footprint of every site or piece of the stage `sites`,
 /// the `depth` cells under the site's height are filled solid and the `clear` cells above it
 /// emptied, so a building stands on flat ground under open sky however the volume's terrain runs.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Level {
     /// The sites or Assemble stage whose footprints are levelled.
@@ -1374,9 +1374,9 @@ impl StageKind {
             | Self::Droplets { .. }
             | Self::Talus { .. }
             | Self::Connected { .. }
-            | Self::Passages { .. } => Output::Field,
+            | Self::Passages { .. }
+            | Self::Top { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } | Self::Aquifer { .. } => Output::Volume,
-            Self::Top { .. } => Output::Field,
             Self::Rules { .. }
             | Self::Area { .. }
             | Self::Nearest { .. }
@@ -1528,35 +1528,35 @@ pub enum Expr {
     /// +y, in 0..1.
     Angle((f32, f32)),
     /// The sum of the two values.
-    Add(Box<Expr>, Box<Expr>),
+    Add(Box<Self>, Box<Self>),
     /// The first value less the second.
-    Sub(Box<Expr>, Box<Expr>),
+    Sub(Box<Self>, Box<Self>),
     /// The product of the two values.
-    Mul(Box<Expr>, Box<Expr>),
+    Mul(Box<Self>, Box<Self>),
     /// The lower of the two values.
-    Min(Box<Expr>, Box<Expr>),
+    Min(Box<Self>, Box<Self>),
     /// The higher of the two values.
-    Max(Box<Expr>, Box<Expr>),
+    Max(Box<Self>, Box<Self>),
     /// The value's absolute value.
-    Abs(Box<Expr>),
+    Abs(Box<Self>),
     /// The value raised to a power above zero, keeping its sign: `sign(a) * |a|^exponent`, so
     /// noise around zero keeps its symmetry. An exponent above 1 flattens values near zero and
     /// sharpens the extremes; one below 1 does the reverse.
-    Pow(Box<Expr>, f32),
+    Pow(Box<Self>, f32),
     /// The largest whole number not above the value.
-    Floor(Box<Expr>),
+    Floor(Box<Self>),
     /// The sine of an angle in radians.
-    Sin(Box<Expr>),
+    Sin(Box<Self>),
     /// 1 where a Rules stage's category at the column is one of the names, 0 elsewhere.
     Is(String, Vec<String>),
     /// The value, held between a low and a high bound.
-    Clamp(Box<Expr>, f32, f32),
+    Clamp(Box<Self>, f32, f32),
     /// 0 at or below the first edge, 1 at or above the second, and a smooth step between.
-    Smoothstep(f32, f32, Box<Expr>),
+    Smoothstep(f32, f32, Box<Self>),
     /// The value mapped linearly from one range onto another, without clamping.
-    Remap(Box<Expr>, (f32, f32), (f32, f32)),
+    Remap(Box<Self>, (f32, f32), (f32, f32)),
     /// A piecewise-linear curve through `(x, y)` points in increasing x, level beyond its ends.
-    Curve(Box<Expr>, Vec<(f32, f32)>),
+    Curve(Box<Self>, Vec<(f32, f32)>),
     /// A column of the row the runtime is focused on in a table
     /// ([`crate::stages::Runtime::focus`]): a planet's radius on its surface, say. Stages only.
     Row(String, String),
@@ -1582,9 +1582,9 @@ pub enum Expr {
         /// The condition tested at the column.
         when: Condition,
         /// The value where the condition holds.
-        then: Box<Expr>,
+        then: Box<Self>,
         /// The value where it does not.
-        otherwise: Box<Expr>,
+        otherwise: Box<Self>,
     },
     /// One expression per category of a Rules stage, blended where categories meet: each
     /// category found within `blend` cells of the column weighs in with a tent that falls from the
@@ -1594,9 +1594,9 @@ pub enum Expr {
         /// The Rules stage whose categories it reads.
         input: String,
         /// Each category's name and its expression, one case per category at most.
-        cases: Vec<(String, Expr)>,
+        cases: Vec<(String, Self)>,
         /// The expression of every category no case names.
-        otherwise: Box<Expr>,
+        otherwise: Box<Self>,
         /// How far around the column it looks for categories, in cells, at most [`MAX_BLEND`].
         blend: u32,
     },
@@ -1754,7 +1754,7 @@ impl Expr {
     }
 
     /// Calls `f` on this expression and every expression inside it, conditions' included.
-    pub(crate) fn visit(&self, f: &mut dyn FnMut(&Expr)) {
+    pub(crate) fn visit(&self, f: &mut dyn FnMut(&Self)) {
         f(self);
         match self {
             Self::Constant(_)
@@ -1892,6 +1892,7 @@ impl Expr {
                     Ok(())
                 }
             }
+            Self::Is(_, names) if names.is_empty() => Err("a category test of no names".to_owned()),
             Self::Input(_)
             | Self::FastNoise(_)
             | Self::X
@@ -1902,7 +1903,8 @@ impl Expr {
             | Self::Parent(_)
             | Self::Index
             | Self::Count
-            | Self::Share(_) => Ok(()),
+            | Self::Share(_)
+            | Self::Is(..) => Ok(()),
             Self::Random(low, high) => {
                 finite(&[*low, *high])?;
                 if low > high {
@@ -1912,8 +1914,6 @@ impl Expr {
                 }
                 Ok(())
             }
-            Self::Is(_, names) if names.is_empty() => Err("a category test of no names".to_owned()),
-            Self::Is(..) => Ok(()),
             Self::Distance((x, y)) | Self::Angle((x, y)) => finite(&[*x, *y]),
             Self::Add(a, b)
             | Self::Sub(a, b)
@@ -1999,7 +1999,7 @@ impl Expr {
 }
 
 /// Why a pack could not be loaded.
-#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PackError {
     /// The text is not a pack file's RON, a field no part of a pack has included; it holds the
     /// RON reader's message.
@@ -2898,7 +2898,7 @@ impl Pack {
                     if !(1..=8).contains(octaves) {
                         return Err(invalid(format!("{octaves} octaves of gullies, not 1 to 8")));
                     }
-                    if !(depth.is_finite() && *depth >= 0.0) || !(positive(*gain) && *gain <= 1.0) {
+                    if !(depth.is_finite() && *depth >= 0.0 && positive(*gain) && *gain <= 1.0) {
                         return Err(invalid(format!(
                             "gullies {depth} cells deep with a gain of {gain}: a depth of 0 or more and a gain above 0 and at most 1"
                         )));
@@ -2920,8 +2920,10 @@ impl Pack {
                     legend,
                     ..
                 } => {
-                    if !(*cell > 0.0 && cell.is_finite())
-                        || !(origin.0.is_finite() && origin.1.is_finite())
+                    if !(*cell > 0.0
+                        && cell.is_finite()
+                        && origin.0.is_finite()
+                        && origin.1.is_finite())
                     {
                         return Err(invalid(format!("pixels of {cell} cells from {origin:?}")));
                     }
@@ -3046,9 +3048,10 @@ impl Pack {
                         ));
                     }
                     if *region == 0
-                        || !(1..=MAX_PASSES).contains(passes)
-                        || !(*slope >= 0.0 && slope.is_finite())
-                        || !(0.0..=1.0).contains(rate)
+                        || !((1..=MAX_PASSES).contains(passes)
+                            && *slope >= 0.0
+                            && slope.is_finite()
+                            && (0.0..=1.0).contains(rate))
                     {
                         return Err(invalid(format!(
                             "a region of {region} chunks, {passes} passes shedding {rate} of the \
@@ -3452,10 +3455,9 @@ impl Pack {
                     rerolls,
                     ..
                 } => {
-                    if !(1..=MAX_REGION).contains(region)
-                        || !(1..=MAX_TRIES).contains(tries)
-                        || *rerolls > MAX_TRIES
-                    {
+                    let out_of_range =
+                        !(1..=MAX_REGION).contains(region) || !(1..=MAX_TRIES).contains(tries);
+                    if out_of_range || *rerolls > MAX_TRIES {
                         return Err(invalid(format!(
                             "a region of {region} chunks, {tries} tries and {rerolls} rerolls; \
                              a region of 1 to {MAX_REGION} chunks, 1 to {MAX_TRIES} tries and up \
@@ -3750,8 +3752,10 @@ impl Pack {
                         }
                     }
                     for (what, range) in [("stretch", stretch), ("clump", clump)] {
-                        if !(range.0.is_finite() && range.0 > 0.0 && range.0 <= range.1)
-                            || !range.1.is_finite()
+                        if !(range.0.is_finite()
+                            && range.0 > 0.0
+                            && range.0 <= range.1
+                            && range.1.is_finite())
                         {
                             return Err(invalid(format!(
                                 "a {what} from {} to {}",
@@ -3778,8 +3782,9 @@ impl Pack {
                         )));
                     }
                     if let Some(group) = group
-                        && (!within(group.size, 1)
-                            || !(group.radius.is_finite() && group.radius >= 0.0))
+                        && !(within(group.size, 1)
+                            && group.radius.is_finite()
+                            && group.radius >= 0.0)
                     {
                         return Err(invalid(format!(
                             "a group of {:?} points within {} cells; sizes from 1 to {} and a \
@@ -3789,8 +3794,10 @@ impl Pack {
                             MAX_SCATTER_SLOTS - 1
                         )));
                     }
-                    if !(scale.0.is_finite() && scale.0 > 0.0 && scale.0 <= scale.1)
-                        || !scale.1.is_finite()
+                    if !(scale.0.is_finite()
+                        && scale.0 > 0.0
+                        && scale.0 <= scale.1
+                        && scale.1.is_finite())
                     {
                         return Err(invalid(format!("a scale from {} to {}", scale.0, scale.1)));
                     }

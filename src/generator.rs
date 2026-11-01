@@ -838,7 +838,7 @@ impl<S: Solver> WorldGenerator<S> {
                 continue;
             }
             let coord = ChunkCoord::of_cell(at, shape);
-            if (!inner && !(release && self.store.contains(coord))) || imported.contains(&coord) {
+            if !(inner || (release && self.store.contains(coord))) || imported.contains(&coord) {
                 continue;
             }
             let Some(tile) = domains.decided(index as u32) else {
@@ -953,15 +953,12 @@ impl<S: Solver> WorldGenerator<S> {
             .repair_halos()
             .into_iter()
             .find(|wider| if was_repair { *wider > halo } else { true });
-        match next.filter(|_| self.config.repair.enabled) {
-            Some(wider) => {
-                self.repairs.insert(chunk, wider);
-            }
-            None => {
-                self.failed.insert(chunk);
-                self.stats.failed += 1;
-                self.events.push(ChunkEvent::Failed { chunk, status });
-            }
+        if let Some(wider) = next.filter(|_| self.config.repair.enabled) {
+            self.repairs.insert(chunk, wider);
+        } else {
+            self.failed.insert(chunk);
+            self.stats.failed += 1;
+            self.events.push(ChunkEvent::Failed { chunk, status });
         }
     }
 

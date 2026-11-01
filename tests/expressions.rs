@@ -266,6 +266,7 @@ fn loading_refuses_parameters_an_expression_cannot_use_and_names_the_stage() {
         Expr::Pow(constant(0.5), -2.0),
         Expr::Pow(constant(0.5), f32::INFINITY),
         Expr::Distance((f32::NAN, 0.0)),
+        Expr::Is("biome".to_owned(), Vec::new()),
         Expr::Select {
             when: Condition::Less(constant(0.0), b(Expr::Clamp(constant(0.0), 1.0, 0.0))),
             then: constant(0.0),

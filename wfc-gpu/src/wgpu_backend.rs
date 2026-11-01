@@ -359,12 +359,12 @@ impl ComputeBackend for WgpuBackend {
             }
             (Some(error), _) => return Err(BackendError::Kernel(error.to_string())),
         }
-        let stale = self
+        let stale = *self
             .stale_cache
             .lock()
             .expect("no thread panics holding the lock");
         if let Some((cache, path)) = &cache
-            && !*stale
+            && !stale
             && let Some(data) = cache.get_data()
         {
             // Written beside the file and renamed over it, so a crash never leaves half a cache,

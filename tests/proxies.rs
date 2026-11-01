@@ -130,9 +130,9 @@ fn a_coarser_box_is_filled_where_half_its_cells_are_in_their_average_colour() {
     // In the first group of two by two by two, four of eight cells: two red, two blue. In the
     // group beside it along x, three of eight: under half.
     let mesh = proxy(|x, y, z| match (x, y, z) {
-        (0, 0, 0) | (1, 0, 0) => "red",
-        (0, 1, 0) | (1, 1, 0) => "blue",
-        (2, 0, 0) | (3, 0, 0) | (2, 1, 0) => "red",
+        (0 | 1, 0, 0) => "red",
+        (0 | 1, 1, 0) => "blue",
+        (2 | 3, 0, 0) | (2, 1, 0) => "red",
         _ => "air",
     });
 

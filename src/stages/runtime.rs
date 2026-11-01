@@ -339,7 +339,7 @@ impl Point {
 
 /// A category per cell column of one chunk: an index into the categories its Rules stage names
 /// ([`crate::stages::StageKind::categories`]).
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct Categories {
     /// The chunk it covers.
     pub chunk: ChunkCoord,
@@ -1198,7 +1198,7 @@ impl Runtime {
                         stage.name,
                         row.id.0,
                         curve.points,
-                        widest.map_or("any".to_owned(), |widest| widest.to_string())
+                        widest.map_or_else(|| "any".to_owned(), |widest| widest.to_string())
                     ),
                 });
             }
@@ -2611,17 +2611,16 @@ impl Runtime {
             }
             let mut made = self.generate_all(index, &batch).into_iter();
             for pending in &batch {
-                let (product, ms) = match &pending.frozen {
-                    Some(frozen) => (Product::clone(frozen), 0.0),
-                    None => {
-                        let (product, ms) =
-                            made.next().expect("a product for every chunk not frozen")?;
-                        if self.pack.stages[index].persist == Persist::Frozen {
-                            self.frozen
-                                .insert((index, pending.chunk), Arc::new(product.clone()));
-                        }
-                        (product, ms)
+                let (product, ms) = if let Some(frozen) = &pending.frozen {
+                    (Product::clone(frozen), 0.0)
+                } else {
+                    let (product, ms) =
+                        made.next().expect("a product for every chunk not frozen")?;
+                    if self.pack.stages[index].persist == Persist::Frozen {
+                        self.frozen
+                            .insert((index, pending.chunk), Arc::new(product.clone()));
                     }
+                    (product, ms)
                 };
                 let product = self.edited(index, product);
                 let ms = pending.ms + ms;
@@ -2955,7 +2954,19 @@ impl Runtime {
             | StageKind::Cave { .. }
             | StageKind::Tunnels { .. }
             | StageKind::Deposit { .. }
-            | StageKind::Spawn { .. } => {
+            | StageKind::Spawn { .. }
+            | StageKind::Sites { .. }
+            | StageKind::TableSites { .. }
+            | StageKind::Locations { .. }
+            | StageKind::TableCurves { .. }
+            | StageKind::Apply { .. }
+            | StageKind::Flatten { .. }
+            | StageKind::Solve { .. }
+            | StageKind::Scatter { .. }
+            | StageKind::Assemble { .. }
+            | StageKind::Region { .. }
+            | StageKind::Rivers { .. }
+            | StageKind::Network { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
             StageKind::Rules { .. } | StageKind::Nearest { .. } | StageKind::Painted { .. } => {
@@ -2973,20 +2984,6 @@ impl Runtime {
             }
             StageKind::Area { input, distance } => {
                 f32::from(area(input, *distance, column, &read)?)
-            }
-            StageKind::Sites { .. }
-            | StageKind::TableSites { .. }
-            | StageKind::Locations { .. }
-            | StageKind::TableCurves { .. }
-            | StageKind::Apply { .. }
-            | StageKind::Flatten { .. }
-            | StageKind::Solve { .. }
-            | StageKind::Scatter { .. }
-            | StageKind::Assemble { .. }
-            | StageKind::Region { .. }
-            | StageKind::Rivers { .. }
-            | StageKind::Network { .. } => {
-                return Err(StageError::NotSampled(stage.name.clone()));
             }
             StageKind::Lakes { .. }
             | StageKind::Droplets { .. }
@@ -3575,14 +3572,16 @@ impl Runtime {
             }
         }
         let field: Arc<[f32]> = Arc::from(self.region_field(index, region, &heights));
-        let mut sampled = self
-            .sampled_fields
-            .lock()
-            .expect("no sample panics holding the lock");
-        if sampled.len() == SAMPLED_REGIONS {
-            sampled.pop_front();
+        {
+            let mut sampled = self
+                .sampled_fields
+                .lock()
+                .expect("no sample panics holding the lock");
+            if sampled.len() == SAMPLED_REGIONS {
+                sampled.pop_front();
+            }
+            sampled.push_back(((index, region), Arc::clone(&field)));
         }
-        sampled.push_back(((index, region), Arc::clone(&field)));
         Ok(field)
     }
 
@@ -4020,7 +4019,7 @@ impl Runtime {
                     near += 1;
                     continue;
                 }
-                let place = self.place(index, [here.0, here.1], &read);
+                let place = self.place(index, here.into(), &read);
                 let mut meets = true;
                 for condition in &kind.when {
                     if !holds(condition, &place)? {
@@ -4191,10 +4190,10 @@ impl Runtime {
             .map_err(|Stopped| StageError::TownsStopped)?;
         for Done { key, town, ms } in done {
             let at = (key.stage, key.site.clone());
-            if !self
+            if self
                 .solving
                 .get(&at)
-                .is_some_and(|&(ticket, _)| ticket == key.ticket)
+                .is_none_or(|&(ticket, _)| ticket != key.ticket)
             {
                 continue;
             }
@@ -5057,8 +5056,7 @@ impl Runtime {
         let mut carved = base.clone();
         // Every tunnel within reach once, in the order of their ids.
         let mut curves: BTreeMap<CurveId, &Curve> = BTreeMap::new();
-        let mut heights = None;
-        if let Some(tunnels) = tunnels {
+        let heights = if let Some(tunnels) = tunnels {
             let (at, reach) = input(&tunnels.curves);
             for (_, product) in self.inputs_within(index, chunk, at, reach.cells(self.size)) {
                 let Product::Curves(near) = product else {
@@ -5104,8 +5102,10 @@ impl Runtime {
                 let (at, reach) = input(height);
                 self.view(index, chunk, at, reach)
             });
-            heights = Some((ground, tunnels.depth));
-        }
+            Some((ground, tunnels.depth))
+        } else {
+            None
+        };
         // Each room within reach once, by id, as a box from its lowest corner to its highest, in
         // cells.
         let mut boxes: BTreeMap<InstanceId, ([f32; 3], [f32; 3])> = BTreeMap::new();
@@ -6074,7 +6074,7 @@ impl Leaves for ColumnPlace<'_, '_> {
                     let case = cases
                         .iter()
                         .find(|(name, _)| *name == names[category])
-                        .map_or(otherwise.as_ref(), |(_, expr)| expr);
+                        .map_or_else(|| otherwise.as_ref(), |(_, expr)| expr);
                     blended += weight / total * evaluate(case, self)?;
                 }
                 blended
@@ -6789,11 +6789,11 @@ mod tests {
         let generated = runtime.run_until_idle().expect("the stages run");
 
         // A blur of 3 columns around one chunk of 8 reaches into all eight neighbours.
-        let rough: Vec<_> = generated
+        let rough = generated
             .iter()
             .filter(|(stage, _)| stage == "rough")
-            .collect();
-        assert_eq!(rough.len(), 9);
+            .count();
+        assert_eq!(rough, 9);
         let first_smooth = generated.iter().position(|(stage, _)| stage == "smooth");
         let last_rough = generated.iter().rposition(|(stage, _)| stage == "rough");
         assert!(last_rough < first_smooth);

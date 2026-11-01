@@ -101,7 +101,7 @@ pub mod coast {
 /// Meant for grids with depth 1 and finite borders (see docs/architecture/solver.md, "Topology",
 /// for why 2D is a one-layer 3D grid).
 pub fn coast_2d() -> Fixture {
-    use coast::*;
+    use coast::{FOREST, GRASS, SAND, WATER};
     let mut rules = RuleBuilder::default();
     for tile in [WATER, SAND, GRASS, FOREST] {
         rules.allow_each(tile, &[tile], &axis::ALL);
