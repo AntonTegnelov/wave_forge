@@ -71,13 +71,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   libvulkan1 / mesa-vulkan-drivers / vulkan-tools -> wgpu at runtime: Mesa's
 #     lavapipe gives a CPU Vulkan device as a fallback; the host GPU is
 #     reached through the dozen driver installed below.
+#   libasound2-dev             -> alsa-sys (Bevy audio)
+#   xvfb                       -> headless X server for windowed runs
+#   gdb / valgrind / linux-perf -> debugging and profiling
+#   poppler-utils              -> reading PDFs (pdftotext, pdftoppm)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg xz-utils unzip \
         git build-essential pkg-config cmake clang libclang-dev \
         libx11-dev libxkbcommon-dev libwayland-dev libxcursor-dev \
-        libxrandr-dev libxi-dev libxinerama-dev \
-        libvulkan1 mesa-vulkan-drivers vulkan-tools \
+        libxrandr-dev libxi-dev libxinerama-dev libasound2-dev \
+        libvulkan1 mesa-vulkan-drivers vulkan-tools xvfb \
+        gdb valgrind linux-perf poppler-utils \
         ripgrep fd-find jq less vim \
         openssh-server sudo \
         locales tini \
@@ -190,12 +195,7 @@ RUN git config --system --add safe.directory /workspaces/wave_forge
 # repo (see DEVCONTAINER_TEMPLATE.md).
 RUN git config --system credential.helper 'store --file /home/dev/.ssh/git-credentials' \
  && git config --system user.name "Anton Tegnelöv" \
- && git config --system user.email "anton.tegnelov@gmail.com" \
- # The Windows host checked the worktree out with core.autocrlf=true (CRLF
- # on disk, LF in the index). The container shares that worktree via the
- # bind mount, so it must apply the same conversion or every text file
- # shows as modified. .gitattributes still forces LF for .devcontainer/**.
- && git config --system core.autocrlf true
+ && git config --system user.email "anton.tegnelov@gmail.com"
 
 # Used by the entrypoint to self-heal ownership of workspace-nested volumes.
 ENV WORKSPACE_DIR=/workspaces/wave_forge

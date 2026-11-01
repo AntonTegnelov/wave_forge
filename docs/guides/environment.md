@@ -30,10 +30,10 @@ so `cargo test --workspace` never compiles an engine.
 
 ### Build output goes outside the bind mount
 
-The repository is bind-mounted from the host, and that mount is slow and can run out of space. The
-dev container puts only the main checkout's `target/` on a named volume. Git worktrees (for example
-under `.claude/worktrees/`) are not covered, and their build output would land on the host drive,
-several GB per worktree. Point Cargo at `~/.cache`, which is a named volume, with one directory per
+The repository is bind-mounted from the host, and build output on it would fill the checkout's
+disk. The dev container puts only the main checkout's `target/` on a named volume. Git worktrees
+(for example under `.claude/worktrees/`) are not covered, and their build output would land in the
+checkout, several GB per worktree. Point Cargo at `~/.cache`, which is a named volume, with one directory per
 workspace so that builds of different workspaces do not wait on each other's build lock:
 
 ```bash
