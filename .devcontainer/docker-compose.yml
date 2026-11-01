@@ -21,10 +21,15 @@ services:
     gpus: all
     volumes:
       # Repo root (includes any gitignored .env via the mount, never the image).
+      # The checkout lives in a WSL2 distro's ext4 filesystem, not on a Windows
+      # drive: Docker Desktop shares Windows drives over 9p, which fails reads
+      # and writes with ENOMEM under load.
       - ..:/workspaces/wave_forge:cached
-      # Host pubkeys installed by the entrypoint at startup — edit
-      # %USERPROFILE%\.ssh\authorized_keys and restart, no rebuild needed.
-      - ${USERPROFILE}/.ssh/authorized_keys:/tmp/host_authorized_keys:ro
+      # Pubkeys installed by the entrypoint at startup, from the gitignored
+      # keys/ folder in the checkout. Edit keys/authorized_keys and restart, no
+      # rebuild needed. The file must exist before `up`, or Docker creates a
+      # directory in its place.
+      - ../keys/authorized_keys:/tmp/host_authorized_keys:ro
       # Persist Claude Code OAuth credentials across rebuilds.
       - claude-config:/home/dev/.claude
       # Stable sshd host-key fingerprint across down/up cycles.

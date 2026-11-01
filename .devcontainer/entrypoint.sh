@@ -28,7 +28,7 @@ if [ -s /tmp/host_authorized_keys ]; then
     chmod 600 /home/dev/.ssh/authorized_keys
 else
     echo "WARNING: /tmp/host_authorized_keys missing/empty - SSH login will fail." >&2
-    echo "         Populate %USERPROFILE%\\.ssh\\authorized_keys and restart the container." >&2
+    echo "         Populate keys/authorized_keys in the checkout and restart the container." >&2
 fi
 
 # The WSL GPU user-space libraries (/usr/lib/wsl/lib, listed in
