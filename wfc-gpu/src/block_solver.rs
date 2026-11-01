@@ -156,6 +156,11 @@ impl<B: ComputeBackend> BlockSolver<B> {
         let backend = &self.backend;
         let compiled: Vec<(RegionShape, Result<B::Pipeline, BackendError>)> =
             std::thread::scope(|scope| {
+                // Every thread is spawned before any is joined, so the kernels compile at once.
+                #[expect(
+                    clippy::needless_collect,
+                    reason = "collecting spawns every thread before the first join"
+                )]
                 let handles: Vec<_> = missing
                     .iter()
                     .map(|(region, wgsl)| {
@@ -312,16 +317,15 @@ impl<B: ComputeBackend> BlockSolver<B> {
         let spec = KernelSpec::new(region, &self.ruleset, &self.config)
             .fitted(&self.backend.limits())
             .map_err(|(needed, available)| GpuError::WorkgroupStorage { needed, available })?;
-        let pipeline = match self.pipelines.get(&region) {
-            Some(pipeline) => Arc::clone(pipeline),
-            None => {
-                let compiling = std::time::Instant::now();
-                let pipeline = Arc::new(self.backend.create_pipeline(&spec.wgsl(), ENTRY)?);
-                self.compilation.pipelines += 1;
-                self.compilation.ms += compiling.elapsed().as_secs_f64() * 1000.0;
-                self.pipelines.insert(region, Arc::clone(&pipeline));
-                pipeline
-            }
+        let pipeline = if let Some(pipeline) = self.pipelines.get(&region) {
+            Arc::clone(pipeline)
+        } else {
+            let compiling = std::time::Instant::now();
+            let pipeline = Arc::new(self.backend.create_pipeline(&spec.wgsl(), ENTRY)?);
+            self.compilation.pipelines += 1;
+            self.compilation.ms += compiling.elapsed().as_secs_f64() * 1000.0;
+            self.pipelines.insert(region, Arc::clone(&pipeline));
+            pipeline
         };
         let domains = spec.domain_words() * capacity;
         self.ensure_shared(&spec, capacity)?;
@@ -397,28 +401,27 @@ impl<B: ComputeBackend> BlockSolver<B> {
             bytes(spec.snapshot_words() * capacity),
             BufferUsage::Scratch,
         )?;
-        let shared = match self.shared.remove(&region) {
-            Some(old) => Shared {
+        let shared = if let Some(old) = self.shared.remove(&region) {
+            Shared {
                 capacity,
                 snaps,
                 ..old
-            },
-            None => {
-                let rules = self
-                    .backend
-                    .create_buffer(bytes(spec.rule_words()), BufferUsage::Input)?;
-                self.backend
-                    .write(&rules, 0, self.ruleset.table().as_words());
-                let weights = self
-                    .backend
-                    .create_buffer(bytes(self.ruleset.num_tiles()), BufferUsage::Input)?;
-                self.backend.write(&weights, 0, self.ruleset.weights());
-                Shared {
-                    capacity,
-                    rules,
-                    weights,
-                    snaps,
-                }
+            }
+        } else {
+            let rules = self
+                .backend
+                .create_buffer(bytes(spec.rule_words()), BufferUsage::Input)?;
+            self.backend
+                .write(&rules, 0, self.ruleset.table().as_words());
+            let weights = self
+                .backend
+                .create_buffer(bytes(self.ruleset.num_tiles()), BufferUsage::Input)?;
+            self.backend.write(&weights, 0, self.ruleset.weights());
+            Shared {
+                capacity,
+                rules,
+                weights,
+                snaps,
             }
         };
         for kernel in self
@@ -447,7 +450,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
     }
 
     /// Reads a finished dispatch back.
-    fn collect(&mut self, running: InFlight<B>) -> Result<BatchResult, SolverError> {
+    fn collect(&self, running: InFlight<B>) -> Result<BatchResult, SolverError> {
         let kernel = &self.kernels[&running.key];
         let mut stats = vec![0u32; 1 + (STATS_WORDS * kernel.capacity) as usize];
         let mut words = vec![0u32; (kernel.spec.domain_words() * kernel.capacity) as usize];

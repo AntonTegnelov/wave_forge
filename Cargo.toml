@@ -135,6 +135,9 @@ missing_const_for_fn = { level = "allow", priority = 1 }
 redundant_pub_crate = { level = "allow", priority = 1 }
 # A walk along a curve steps a distance in cells, which is a float, by at least a minimum each time.
 while_float = { level = "allow", priority = 1 }
+# Taking a value is part of a public signature's contract, which the lint cannot tell from a slip:
+# `Runtime::focus` and `BlockSolver::start_with` take what their callers build for the call.
+needless_pass_by_value = { level = "allow", priority = 1 }
 # A `match` or `if let` reads as plainly as `map_or_else` with two closures.
 option_if_let_else = { level = "allow", priority = 1 }
 # What clippy flags is mostly an `expect` naming an invariant, a bug if it ever breaks; a panic a

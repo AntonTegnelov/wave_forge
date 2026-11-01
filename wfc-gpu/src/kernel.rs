@@ -7,6 +7,7 @@
 
 use crate::backend::BackendLimits;
 use bytemuck::{Pod, Zeroable};
+use std::fmt::Write;
 use wfc_core::rules::{AXES, MAX_WORDS};
 use wfc_core::{RegionShape, Ruleset};
 
@@ -347,52 +348,70 @@ fn mask_prelude(words: u32, rules: &str) -> String {
              return lo.x + lo.y + lo.z + lo.w + hi.x + hi.y + hi.z + hi.w; }\n",
         );
     }
-    prelude.push_str(&format!(
-        "fn mask_zero() -> Mask {{ return {}; }}\n",
+    writeln!(
+        prelude,
+        "fn mask_zero() -> Mask {{ return {}; }}",
         build(&|_| "0u".to_owned())
-    ));
+    )
+    .expect("a String takes any text");
     // One tile, without writing a component the index chooses: every word is a select.
-    prelude.push_str(&format!(
-        "fn mask_one(tile: u32) -> Mask {{\n    let word = tile / 32u;\n    let bit = 1u << (tile % 32u);\n    return {};\n}}\n",
+    writeln!(
+        prelude,
+        "fn mask_one(tile: u32) -> Mask {{\n    let word = tile / 32u;\n    let bit = 1u << (tile % 32u);\n    return {};\n}}",
         build(&|index| format!("select(0u, bit, word == {index}u)"))
-    ));
-    prelude.push_str(&format!(
-        "fn dom_load(c: u32) -> Mask {{ return {}; }}\n",
+    )
+    .expect("a String takes any text");
+    writeln!(
+        prelude,
+        "fn dom_load(c: u32) -> Mask {{ return {}; }}",
         build(&|index| format!("atomicLoad(&dom[c * W + {index}u])"))
-    ));
-    prelude.push_str(&format!(
-        "fn dom_store(c: u32, m: Mask) {{ {} }}\n",
+    )
+    .expect("a String takes any text");
+    writeln!(
+        prelude,
+        "fn dom_store(c: u32, m: Mask) {{ {} }}",
         each(" ", &|index| format!(
             "atomicStore(&dom[c * W + {index}u], {});",
             field("m", index)
         ))
-    ));
-    prelude.push_str(&format!(
-        "fn init_load(at: u32) -> Mask {{ return {}; }}\n",
+    )
+    .expect("a String takes any text");
+    writeln!(
+        prelude,
+        "fn init_load(at: u32) -> Mask {{ return {}; }}",
         build(&|index| format!("init[at + {index}u]"))
-    ));
-    prelude.push_str(&format!(
-        "fn out_store(at: u32, m: Mask) {{ {} }}\n",
+    )
+    .expect("a String takes any text");
+    writeln!(
+        prelude,
+        "fn out_store(at: u32, m: Mask) {{ {} }}",
         each(" ", &|index| format!(
             "out[at + {index}u] = {};",
             field("m", index)
         ))
-    ));
-    prelude.push_str(&format!(
-        "fn snap_load(at: u32) -> Mask {{ return {}; }}\n",
+    )
+    .expect("a String takes any text");
+    writeln!(
+        prelude,
+        "fn snap_load(at: u32) -> Mask {{ return {}; }}",
         build(&|index| format!("snaps[at + {index}u]"))
-    ));
-    prelude.push_str(&format!(
-        "fn snap_store(at: u32, m: Mask) {{ {} }}\n",
+    )
+    .expect("a String takes any text");
+    writeln!(
+        prelude,
+        "fn snap_store(at: u32, m: Mask) {{ {} }}",
         each(" ", &|index| format!(
             "snaps[at + {index}u] = {};",
             field("m", index)
         ))
-    ));
-    prelude.push_str(&format!(
-        "fn rule_row(row: u32) -> Mask {{ return {}; }}\n",
+    )
+    .expect("a String takes any text");
+    writeln!(
+        prelude,
+        "fn rule_row(row: u32) -> Mask {{ return {}; }}",
         build(&|index| format!("{rules}[row + {index}u]"))
-    ));
+    )
+    .expect("a String takes any text");
     // The tiles allowed along `axis` of a cell holding any tile of `m`, one word at a time.
     prelude.push_str(
         "fn allowed_by(m: Mask, axis: u32) -> Mask {\n    var acc = mask_zero();\n    var bits = 0u;\n",

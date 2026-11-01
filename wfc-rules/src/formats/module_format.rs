@@ -198,6 +198,10 @@ pub fn module_faces(content: &str) -> Result<Vec<ModuleFaces>, LoadError> {
 /// If the text is not valid RON of this form, or a module names a face, a connector pairing or an
 /// axis that does not exist, or uses a top face as a side or the other way round.
 pub fn parse_module_set(content: &str) -> Result<ModuleSet, LoadError> {
+    enum Built {
+        Side(HorizontalFace),
+        Top(VerticalFace),
+    }
     // An optional field such as `surface: "stone"` reads without `Some(...)`, which still works.
     let file: ModuleFile = ron::Options::default()
         .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
@@ -218,10 +222,6 @@ pub fn parse_module_set(content: &str) -> Result<ModuleSet, LoadError> {
         u32::try_from(index).expect("fewer than 2^32 connectors")
     };
 
-    enum Built {
-        Side(HorizontalFace),
-        Top(VerticalFace),
-    }
     let mut faces: BTreeMap<&str, Built> = BTreeMap::new();
     for (name, face) in &file.faces {
         let built = match face {

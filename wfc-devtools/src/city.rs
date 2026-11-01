@@ -372,7 +372,10 @@ fn walkable_face(m: &CompiledModules, tile: usize, axis: usize) -> bool {
 /// The voxel model of an unrotated prototype. Geometry is deliberately crude: it only has to make
 /// the structure readable in a render.
 fn prototype_model(modules: &CompiledModules, prototype: &ModulePrototype) -> VoxelModel {
-    use palette::*;
+    use palette::{
+        ASPHALT, DECK, DOOR, FLAT_ROOF, GRASS, LAMP, PLAZA, PLAZA_JOINT, POST, ROOF, SIDEWALK,
+        STEP, STONE, WALL, WATER, WINDOW,
+    };
     let r = RESOLUTION;
     let mut m = VoxelModel::empty(r);
     let name = prototype.name.as_str();

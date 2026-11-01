@@ -129,7 +129,7 @@ pub fn ground<'a>(
         }
     }
     let heights: Vec<f32> = positions.iter().map(|position| position[1]).collect();
-    let steps: Vec<u32> = (0..)
+    let steps: Vec<u32> = (0..u32::BITS)
         .map(|power| 1_u32 << power)
         .take_while(|&step| {
             step <= sx.min(sy) && sx.is_multiple_of(step) && sy.is_multiple_of(step)
@@ -396,7 +396,7 @@ impl GroundRelief {
     /// a material in the order of the fields: `reliefs` by index, [`GroundRelief::DEFAULT`] for a
     /// material past its end.
     #[must_use]
-    pub fn texels(reliefs: &[GroundRelief], count: usize) -> Vec<f32> {
+    pub fn texels(reliefs: &[Self], count: usize) -> Vec<f32> {
         (0..count)
             .flat_map(|index| {
                 let relief = reliefs.get(index).copied().unwrap_or(Self::DEFAULT);

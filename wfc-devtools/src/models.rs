@@ -154,6 +154,8 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// triangles gives a node without a mesh, which glTF allows and a mesh would not.
 #[must_use]
 pub fn glb(mesh: &Mesh, name: &str) -> Vec<u8> {
+    const VERTICES: u32 = 34_962;
+    const INDICES: u32 = 34_963;
     let mut bin: Vec<u8> = Vec::new();
     let mut views = Vec::new();
     let mut push_view = |bytes: &[u8], target: u32| {
@@ -180,8 +182,6 @@ pub fn glb(mesh: &Mesh, name: &str) -> Vec<u8> {
         .flat_map(|&entry| [(entry as f32 + 0.5) / width, 0.5])
         .flat_map(f32::to_le_bytes)
         .collect();
-    const VERTICES: u32 = 34_962;
-    const INDICES: u32 = 34_963;
     let has_mesh = !mesh.indices.is_empty();
     let mut json = serde_json::json!({
         "asset": { "version": "2.0", "generator": "wave_forge wfc-export-models" },
