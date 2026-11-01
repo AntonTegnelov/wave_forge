@@ -13,8 +13,11 @@ use wfc_core::ChunkCoord;
 /// A frozen stage's chunk as it was first generated, before the edits of it.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct FrozenChunk {
+    /// The frozen stage's name.
     pub stage: String,
+    /// The chunk.
     pub chunk: ChunkCoord,
+    /// The stage's product for the chunk, as first generated.
     pub product: Product,
 }
 

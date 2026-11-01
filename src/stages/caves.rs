@@ -56,8 +56,7 @@ const fn parent(pattern: Pattern, index: usize) -> Option<usize> {
     match (index, pattern) {
         (0, _) => None,
         (_, Pattern::Linear) => Some(index - 1),
-        (_, Pattern::Star) => Some(0),
-        (1..=3, Pattern::Hub) => Some(0),
+        (_, Pattern::Star) | (1..=3, Pattern::Hub) => Some(0),
         (_, Pattern::Hub) => Some(index - 3),
     }
 }

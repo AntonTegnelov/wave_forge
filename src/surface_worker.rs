@@ -132,6 +132,8 @@ impl SurfaceWorker {
                 out.push(mesh);
             }
         }
+        drop(asked);
+        drop(done);
         out
     }
 

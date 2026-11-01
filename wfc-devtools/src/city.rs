@@ -316,7 +316,9 @@ impl std::ops::Add for FaceMeetings {
 /// Walkable faces meeting inside chunks and across the seams between them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WalkContinuity {
+    /// Faces where both cells are in the same chunk.
     pub inside: FaceMeetings,
+    /// Faces on a seam, where the two cells are in neighbouring chunks.
     pub across_seams: FaceMeetings,
 }
 

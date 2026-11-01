@@ -79,13 +79,18 @@ inherits = "release"
 debug = true
 strip = false
 
+# Every crate of this workspace takes these lints (`[lints] workspace = true`), and CI's clippy runs
+# with `-D warnings`, so each is an error there. A lint allowed here contradicts a decision the
+# project has taken, which its comment names.
 [workspace.lints.rust]
+# The one unsafe call, wgpu's pipeline cache, is allowed where it is made and says why it is sound.
 unsafe_code = "warn"
 missing_docs = "warn"
-unused_crate_dependencies = "warn"
+# Not used: it fires on every test, bench and binary target for each dependency of its crate that
+# the target itself does not name.
+unused_crate_dependencies = "allow"
 
 [workspace.lints.clippy]
-# Specific clippy lints we care about
 pedantic = "warn"
 style = "warn"
 complexity = "warn"
@@ -93,18 +98,50 @@ perf = "warn"
 nursery = "warn"
 suspicious = "warn"
 
-# Individual lints
 unwrap_used = "warn"
-expect_used = "warn"
 todo = "warn"
 dbg_macro = "warn"
 unimplemented = "warn"
 
-# Disable specific pedantic lints that are too noisy
+# An impossible state fails loud with `expect` and the invariant it breaks
+# (.claude/rules/fail-loud.md); `unwrap_used` still refuses one without a reason.
+expect_used = { level = "allow", priority = 1 }
+# Every platform has to get the same world: a fused multiply-add, or a library's rounding of
+# `ln_1p`, `hypot` and the like, changes the last bit (clippy.toml's disallowed methods).
+suboptimal_flops = { level = "allow", priority = 1 }
+imprecise_flops = { level = "allow", priority = 1 }
+manual_midpoint = { level = "allow", priority = 1 }
+# Results are bit-exact by contract, and the tests compare them so.
+float_cmp = { level = "allow", priority = 1 }
+# Coordinates and counts are bounded long before a cast between widths could wrap
+# (`stages::brushes::MAX_COORDINATE`), as for the truncation and sign casts below.
+cast-possible-wrap = { level = "allow", priority = 1 }
 module-name-repetitions = { level = "allow", priority = 1 }
 cast-possible-truncation = { level = "allow", priority = 1 }
 cast-precision-loss = { level = "allow", priority = 1 }
 cast-sign-loss = { level = "allow", priority = 1 }
+# A function is split when it takes on a second purpose, not at a line count
+# (.claude/rules/separation-of-concerns.md).
+too_many_lines = { level = "allow", priority = 1 }
+# The documents' voice opens with a whole sentence of what an item is, however long.
+too_long_first_doc_paragraph = { level = "allow", priority = 1 }
 doc-markdown = { level = "allow", priority = 1 }
+# Geometry and noise name their quantities as their formulas do: x, y, z, dx, dy.
+many_single_char_names = { level = "allow", priority = 1 }
+similar_names = { level = "allow", priority = 1 }
+# `const` is a promise in a public signature, made where a caller needs it, not wherever it compiles.
+missing_const_for_fn = { level = "allow", priority = 1 }
+# `pub(crate)` says an item is the crate's own wherever its module sits.
+redundant_pub_crate = { level = "allow", priority = 1 }
+# A walk along a curve steps a distance in cells, which is a float, by at least a minimum each time.
+while_float = { level = "allow", priority = 1 }
+# A `match` or `if let` reads as plainly as `map_or_else` with two closures.
+option_if_let_else = { level = "allow", priority = 1 }
+# What clippy flags is mostly an `expect` naming an invariant, a bug if it ever breaks; a panic a
+# caller can cause, an argument out of range, gets its `# Panics` section by hand.
+missing_panics_doc = { level = "allow", priority = 1 }
 must-use-candidate = { level = "allow", priority = 1 }
 missing-errors-doc = { level = "allow", priority = 1 }
+
+[lints]
+workspace = true

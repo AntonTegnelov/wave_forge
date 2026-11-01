@@ -22,7 +22,10 @@ use std::fmt::Write;
 /// its cell spanning 0 to 1 along each axis.
 #[derive(Clone, Copy, Debug)]
 pub struct KitModule<'a> {
+    /// The module's name, which the proposal gives it.
     pub name: &'a str,
+    /// The vertices of the module's mesh, in the lattice's frame with `+z` up, its cell spanning 0
+    /// to 1 along each axis.
     pub positions: &'a [[f32; 3]],
 }
 
@@ -31,8 +34,11 @@ pub struct KitModule<'a> {
 /// the modules with a face of it, in the kit's order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProposedConnector {
+    /// The name the proposal gives the connector, `"side n"` or `"top n"`.
     pub name: String,
+    /// Whether the connector joins tops and bottoms rather than sides.
     pub top: bool,
+    /// The modules with a face of this connector, in the kit's order.
     pub modules: Vec<String>,
 }
 
@@ -41,7 +47,9 @@ pub struct ProposedConnector {
 /// by the proposal's names.
 #[derive(Clone, Debug, Default)]
 pub struct Naming {
+    /// The artist's name for a connector, keyed by the name the proposal gives it.
     pub names: BTreeMap<String, String>,
+    /// The side connectors walkers may cross, by the names the proposal gives them.
     pub walkable: BTreeSet<String>,
 }
 

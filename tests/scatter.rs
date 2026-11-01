@@ -120,7 +120,7 @@ fn every_point_passes_its_tests_and_stands_on_the_ground() {
             }
             assert_eq!(point.id.chunk, chunk);
             assert_eq!(
-                point.id.cell() as i64,
+                i64::from(point.id.cell()),
                 (y - i64::from(chunk.y) * 8) * 8 + (x - i64::from(chunk.x) * 8)
             );
         }

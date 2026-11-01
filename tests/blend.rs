@@ -16,10 +16,18 @@ use wave_forge::{ChunkCoord, FocusPoint};
 const SIZE: [u32; 2] = [8, 8];
 const SEED: u64 = 11;
 
+#[expect(
+    clippy::unnecessary_box_returns,
+    reason = "an expression's operands are boxed"
+)]
 fn b(expr: Expr) -> Box<Expr> {
     Box::new(expr)
 }
 
+#[expect(
+    clippy::unnecessary_box_returns,
+    reason = "an expression's operands are boxed"
+)]
 fn constant(value: f32) -> Box<Expr> {
     b(Expr::Constant(value))
 }

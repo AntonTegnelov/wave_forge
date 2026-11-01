@@ -19,3 +19,6 @@ default = []
 reference = []
 # Serde for the coordinates products carry, for saves.
 serde = ["dep:serde"]
+
+[lints]
+workspace = true

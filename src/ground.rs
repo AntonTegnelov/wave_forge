@@ -28,6 +28,7 @@ use wfc_core::ChunkCoord;
 /// height-field collider.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroundMesh {
+    /// The chunk the ground belongs to.
     pub chunk: ChunkCoord,
     /// Vertices along the engine's x and z: one more than the chunk's columns each way.
     pub size: [u32; 2],
@@ -372,9 +373,13 @@ pub fn ground_channels(channels: [Option<Vec<f32>>; GROUND_CHANNELS]) -> Option<
 /// sand settles between pebbles and rock plates stand out of their cracks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroundRelief {
+    /// How much of the micro-height is pebbles, round stones in cells.
     pub pebbles: f32,
+    /// How much of the micro-height is cracks, plates parted by narrow cracks.
     pub cracks: f32,
+    /// How much of the micro-height is tufts, fine bumps.
     pub tufts: f32,
+    /// How wide one feature is, in world units.
     pub size: f32,
 }
 

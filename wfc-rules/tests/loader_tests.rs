@@ -1,3 +1,6 @@
+//! Rule files loaded from disk and from text: valid tile sets load, malformed or inconsistent ones
+//! are refused with the matching error, and the example module set and tile set files load with
+//! their names, rotations and tags.
 use wfc_rules::LoadError;
 #[cfg(feature = "serde")]
 use wfc_rules::{AdjacencyRules, TileSet};

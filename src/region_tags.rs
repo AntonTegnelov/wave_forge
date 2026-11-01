@@ -14,6 +14,7 @@ use wfc_core::{Chunk, ChunkCoord};
 /// A chunk's rooms and sounds, in a Y-up engine's world space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RegionTags {
+    /// The chunk the rooms and sounds belong to.
     pub chunk: ChunkCoord,
     /// Boxes that together cover the chunk's indoor cells, each cell once.
     pub interiors: Vec<CellBox>,

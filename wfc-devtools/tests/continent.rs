@@ -7,7 +7,7 @@
 //! cargo test -p wfc-devtools --release --test continent -- --ignored --nocapture
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use wave_forge::stages::{Condition, Expr, Facts, Runtime, StageKind, Value};
 use wave_forge::{ChunkCoord, FocusPoint};
@@ -526,7 +526,7 @@ fn every_larger_place_of_four_regions_grows_its_pieces() {
 
     let mut grown: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for (stage, kinds, min) in &assemblies {
-        let mut places = BTreeMap::new();
+        let mut places = BTreeSet::new();
         let mut pieces: BTreeMap<_, usize> = BTreeMap::new();
         for &chunk in &region {
             for site in runtime.sites("places", chunk).expect("placed") {
@@ -535,7 +535,7 @@ fn every_larger_place_of_four_regions_grows_its_pieces() {
                     .as_deref()
                     .is_some_and(|kind| kinds.iter().any(|wanted| wanted == kind))
                 {
-                    places.insert(site.id.clone(), ());
+                    places.insert(site.id.clone());
                 }
             }
             for stamp in runtime.stamps(stage, chunk).expect("grown") {
@@ -546,7 +546,7 @@ fn every_larger_place_of_four_regions_grows_its_pieces() {
         for (site, _) in pieces.keys() {
             *per_place.entry(site.clone()).or_default() += 1;
         }
-        for site in places.keys() {
+        for site in &places {
             let count = per_place.get(site).copied().unwrap_or(0);
             assert!(count as u32 >= *min, "{stage} on {site:?}: {count} pieces");
         }

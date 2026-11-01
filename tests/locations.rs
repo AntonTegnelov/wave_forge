@@ -207,6 +207,10 @@ fn a_table_that_cannot_be_placed_is_refused_by_stage() {
 }
 
 #[test]
+#[expect(
+    clippy::match_same_arms,
+    reason = "each kind of location is listed with its biome, as the pack lists them"
+)]
 fn the_ring_worlds_shrines_and_crypts_stand_in_their_rings_within_their_quotas() {
     let text = std::fs::read_to_string(format!(
         "{}/examples/rings.world.ron",

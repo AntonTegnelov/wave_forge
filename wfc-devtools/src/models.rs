@@ -20,7 +20,9 @@ use crate::render::{Color, VoxelModel};
 /// A triangle mesh coloured from a palette, in the engine's frame.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Mesh {
+    /// Vertex positions, in a cell from -0.5 to 0.5 on every axis centred on the origin.
     pub positions: Vec<[f32; 3]>,
+    /// Unit normals, one per vertex, out of the voxel face it belongs to.
     pub normals: Vec<[f32; 3]>,
     /// Each vertex's colour, as an index into `palette`.
     pub colors: Vec<u32>,

@@ -152,9 +152,8 @@ impl TownThread {
         loop {
             match finished.try_recv() {
                 Ok(next) => done.push(next),
-                Err(TryRecvError::Empty) => return Ok(done),
                 Err(TryRecvError::Disconnected) if done.is_empty() => return Err(Stopped),
-                Err(TryRecvError::Disconnected) => return Ok(done),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return Ok(done),
             }
         }
     }

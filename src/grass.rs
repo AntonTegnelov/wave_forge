@@ -12,8 +12,11 @@ use crate::ChunkCoord;
 /// of a column's blades that show falls from all of them to `keep`, along a smoothstep.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GrassThinning {
+    /// The distance from the camera where thinning starts, in world units.
     pub from: f32,
+    /// The distance from the camera where thinning ends, in world units.
     pub to: f32,
+    /// The share of a column's blades that still show at `to` and beyond, from 0 to 1.
     pub keep: f32,
 }
 

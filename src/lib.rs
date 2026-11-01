@@ -177,6 +177,7 @@ pub struct WorldConfig {
     /// leave border tiles that no row of neighbours can complete (docs/architecture/world.md,
     /// "Chunks and the halo").
     pub halo: u32,
+    /// How a chunk that will not solve is repaired.
     pub repair: RepairPolicy,
 }
 

@@ -85,6 +85,17 @@ fn height_at(runtime: &Runtime, [x, y]: [f32; 2]) -> f32 {
     runtime.sample("height", [x, y]).expect("a sample")
 }
 
+/// The root of `at`'s group in a union-find over `group`, which it flattens on the way.
+fn root(group: &mut [usize], at: usize) -> usize {
+    if group[at] == at {
+        at
+    } else {
+        let top = root(group, group[at]);
+        group[at] = top;
+        top
+    }
+}
+
 #[test]
 fn a_road_goes_round_a_ridge_through_its_gap() {
     let (runtime, roads) = ridge_roads(RIDGE, "");
@@ -199,15 +210,6 @@ fn every_town_of_a_region_is_joined_to_the_others() {
     };
 
     let mut group: Vec<usize> = (0..towns.len()).collect();
-    fn root(group: &mut [usize], at: usize) -> usize {
-        if group[at] == at {
-            at
-        } else {
-            let top = root(group, group[at]);
-            group[at] = top;
-            top
-        }
-    }
     for road in roads.values() {
         let (a, b) = (
             next_to(road.points[0]),

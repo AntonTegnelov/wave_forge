@@ -47,6 +47,7 @@ use wfc_core::hash::pcg3d;
 /// A value per cell column of one chunk.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Field {
+    /// The chunk it covers.
     pub chunk: ChunkCoord,
     /// Columns along the lattice's x and y.
     pub size: [u32; 2],
@@ -69,6 +70,7 @@ impl Field {
 /// A value per voxel of one chunk: its columns, each from level `bottom` up.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Volume {
+    /// The chunk it covers.
     pub chunk: ChunkCoord,
     /// Columns along the lattice's x and y, and levels.
     pub size: [u32; 3],
@@ -116,17 +118,24 @@ pub enum SiteId {
     Row(RowId),
     /// A Locations stage's site: its region and its place in the order the region placed its
     /// sites.
-    Location { region: (i32, i32), index: u32 },
+    Location {
+        /// The region that placed it, along the lattice's x and y.
+        region: (i32, i32),
+        /// Its place in the order the region placed its sites, from 0.
+        index: u32,
+    },
 }
 
 /// A settlement site: a rectangle of whole chunks at one height.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Site {
+    /// Which site it is.
     pub id: SiteId,
     /// The kind a location table gave it; none for a Sites or TableSites stage's site.
     pub kind: Option<Arc<str>>,
     /// The chunks it covers, from `min` up to but not including `max`, along the lattice's x and y.
     pub min: (i32, i32),
+    /// Where the chunks it covers end, not included.
     pub max: (i32, i32),
     /// The height its ground is levelled to.
     pub height: f32,
@@ -218,6 +227,7 @@ pub struct Stamp {
     pub turn: f32,
     /// The columns it covers, from `min` up to but not including `max`.
     pub min: [i64; 2],
+    /// Where the columns it covers end, not included.
     pub max: [i64; 2],
 }
 
@@ -331,6 +341,7 @@ impl Point {
 /// ([`crate::stages::StageKind::categories`]).
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Categories {
+    /// The chunk it covers.
     pub chunk: ChunkCoord,
     /// Columns along the lattice's x and y.
     pub size: [u32; 2],
@@ -353,8 +364,11 @@ impl Categories {
 /// What a stage holds for one chunk.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Product {
+    /// A value per column of the chunk.
     Field(Field),
+    /// A value per voxel of the chunk.
     Volume(Volume),
+    /// A category per column of the chunk.
     Categories(Categories),
     /// The sites whose footprint overlaps the chunk.
     Sites(Vec<Site>),
@@ -524,14 +538,18 @@ impl Levelled {
 /// in all and at most. A Solve stage's time includes the towns it solved.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StageTiming {
+    /// How many products the stage has generated.
     pub products: u64,
+    /// The milliseconds they took in all.
     pub ms: f64,
+    /// The milliseconds the slowest of them took.
     pub slowest_ms: f64,
 }
 
 /// Why generating a stage failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum StageError {
+    /// A stage was asked for by a name the pack does not give one.
     #[error("no stage is named {0:?}")]
     UnknownStage(String),
     /// A stage read an input further from its chunk than its reach allows. That is a bug in the
@@ -540,13 +558,21 @@ pub enum StageError {
         "stage {stage:?} read {input:?} {needed} cells beyond its chunk, but its reach is {reach}"
     )]
     OutOfReach {
+        /// The stage that read too far.
         stage: String,
+        /// The input it read.
         input: String,
+        /// Its reach, in cells.
         reach: u32,
+        /// How far beyond its chunk it read, in cells.
         needed: u32,
     },
+    /// A Solve stage was generated, but the runtime was given no town solver
+    /// ([`Runtime::with_towns`]).
     #[error("stage {0:?} solves towns, but the runtime was given no town solver")]
     NoTownSolver(String),
+    /// A Region stage names a region job the runtime was not given
+    /// ([`Runtime::with_region_job`]).
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
     /// Only stages computed column by column from what they read, or over a region of such
@@ -560,68 +586,129 @@ pub enum StageError {
     /// Only a Sites stage's sites, a hash of their region, can be found without chunks.
     #[error("stage {0:?} cannot be searched without chunks: it is not a Sites stage")]
     NotLocated(String),
+    /// A stage computed a region at a time could not compute a region within its budget: every
+    /// attempt was rejected.
     #[error("stage {stage:?} gave up on region {region:?} after {} attempts: {}", log.len(), log.join("; "))]
     RegionRejected {
+        /// The stage that gave up.
         stage: String,
+        /// The region, along the lattice's x and y.
         region: (i32, i32),
+        /// Why each attempt was rejected, in the order they were made.
         log: Vec<String>,
     },
+    /// A noise was replaced by a name the pack does not give one ([`Runtime::with_noise`]).
     #[error("the pack names no noise {0:?}")]
     UnknownNoise(String),
+    /// A noise given in place of the pack's cannot be sampled ([`NoiseConfig::check`]).
     #[error("the noise {name:?}: {message}")]
-    Noise { name: String, message: String },
-    #[error("an edit cannot be applied: {0}")]
-    Edit(String),
-    #[error("the pack gives the world no bound")]
-    Unbounded,
-    #[error("no table is named {0:?}")]
-    UnknownTable(String),
-    #[error("table {table:?}: {message}")]
-    Table { table: String, message: String },
-    #[error("a stage reads the focused row of table {0:?}, but no row of it is focused")]
-    NoFocus(String),
-    #[error("the runtime was given no facts, which a stage or a focus reads")]
-    NoFacts,
-    #[error("a Painted stage reads painting {0:?}, which the runtime was not given")]
-    NoPainting(String),
-    #[error("painting {painting:?}: {message}")]
-    Painting { painting: String, message: String },
-    #[error("a parameter: {0}")]
-    Param(String),
-    #[error("the facts were made for another pack or seed than the runtime's")]
-    OtherFacts,
-    #[error("stage {stage:?} cannot draw curve {curve:?}: {message}")]
-    Curve {
-        stage: String,
-        curve: CurveId,
+    Noise {
+        /// The noise's name in the pack.
+        name: String,
+        /// Why it cannot be sampled.
         message: String,
     },
+    /// An edit or a stroke is refused, a stage asked for a Scatter report is no Scatter stage,
+    /// or RON text is not an edits log or a save; the message says which.
+    #[error("an edit cannot be applied: {0}")]
+    Edit(String),
+    /// The chunks of a finite world were asked for, but the pack gives the world no bound.
+    #[error("the pack gives the world no bound")]
+    Unbounded,
+    /// A table was asked for by a name the pack does not give one.
+    #[error("no table is named {0:?}")]
+    UnknownTable(String),
+    /// A table's rows were refused or could not be generated, or a focused row is not in it.
+    #[error("table {table:?}: {message}")]
+    Table {
+        /// The table's name.
+        table: String,
+        /// What is wrong.
+        message: String,
+    },
+    /// A stage reads the focused row of a table no row of which is focused
+    /// ([`Runtime::focus`]).
+    #[error("a stage reads the focused row of table {0:?}, but no row of it is focused")]
+    NoFocus(String),
+    /// A stage or a focus reads facts, but the runtime was given none ([`Runtime::set_facts`]).
+    #[error("the runtime was given no facts, which a stage or a focus reads")]
+    NoFacts,
+    /// A Painted stage reads a painting the runtime was not given ([`Runtime::give_painting`]).
+    #[error("a Painted stage reads painting {0:?}, which the runtime was not given")]
+    NoPainting(String),
+    /// A painting's pixels do not fill the picture, or hold a colour the legend of a stage
+    /// reading it does not know.
+    #[error("painting {painting:?}: {message}")]
+    Painting {
+        /// The painting's name.
+        painting: String,
+        /// What is wrong.
+        message: String,
+    },
+    /// A parameter set is not one the pack declares, or its value is outside its range
+    /// ([`Runtime::set_params`]).
+    #[error("a parameter: {0}")]
+    Param(String),
+    /// The facts given were made for another pack or seed than the runtime's.
+    #[error("the facts were made for another pack or seed than the runtime's")]
+    OtherFacts,
+    /// A curve is not one its stage can use: a region job's curve whose values or heights do not
+    /// match its points or are not finite, or a curve read with a radius out of range or no height
+    /// to draw it at.
+    #[error("stage {stage:?} cannot draw curve {curve:?}: {message}")]
+    Curve {
+        /// The stage that made or reads the curve.
+        stage: String,
+        /// The curve.
+        curve: CurveId,
+        /// What is wrong with it.
+        message: String,
+    },
+    /// The town solver given works on chunks of another size than the runtime's
+    /// ([`Runtime::with_towns`]).
     #[error("the town solver's chunks are {solver:?} columns, the runtime's {runtime:?}")]
-    ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
+    ChunkMismatch {
+        /// The solver's chunk size, in columns along the lattice's x and y.
+        solver: [u32; 2],
+        /// The runtime's chunk size, in columns along the lattice's x and y.
+        runtime: [u32; 2],
+    },
+    /// The thread the town solver runs on stopped.
     #[error("the town solver's thread stopped")]
     TownsStopped,
+    /// The frozen store could not keep or give back a chunk.
     #[error(transparent)]
     Store(#[from] StoreError),
     /// A frozen chunk from a save or a store was generated for chunks of another size than the
     /// runtime's, or does not hold the chunk it is kept as.
     #[error("the frozen chunk {chunk:?} of stage {stage:?} does not fit the runtime: {message}")]
     Frozen {
+        /// The frozen stage.
         stage: String,
+        /// The chunk it is kept as.
         chunk: ChunkCoord,
+        /// How it does not fit.
         message: String,
     },
+    /// The town solver could not solve a Solve stage's town on a site.
     #[error("stage {stage:?} could not solve the town of {site:?}: {message}")]
     Town {
+        /// The Solve stage.
         stage: String,
+        /// The site the town stands on.
         site: SiteId,
+        /// The solver's reason.
         message: String,
     },
     /// An Assemble stage's assembly on a site stayed under its least number of pieces after
     /// every reroll.
     #[error("stage {stage:?} grew fewer than {min} pieces on {site:?} after every reroll")]
     Assemble {
+        /// The Assemble stage.
         stage: String,
+        /// The site the assembly grew on.
         site: SiteId,
+        /// The least number of pieces it has to have.
         min: u32,
     },
 }
@@ -700,8 +787,11 @@ type RegionKey = (usize, (i32, i32));
 /// is `pixels[y * width + x]`. Alpha is not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Painting {
+    /// Its width, in pixels.
     pub width: u32,
+    /// Its height, in pixels.
     pub height: u32,
+    /// Its pixels as RGBA, row by row.
     pub pixels: Vec<[u8; 4]>,
 }
 
@@ -6546,8 +6636,11 @@ pub enum Rejection {
 /// ([`Runtime::scatter_report`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Judgement {
+    /// Where the candidate stood, in cells along the lattice's x and y.
     pub at: [f32; 2],
+    /// `Ok` if it became a point, or why it did not.
     pub verdict: Result<(), Rejection>,
+    /// What the stage's modifiers read there.
     pub readings: Readings,
 }
 

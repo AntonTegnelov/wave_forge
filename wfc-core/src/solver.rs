@@ -93,10 +93,17 @@ impl RegionStatus {
 /// What one region's solve cost.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RegionStats {
+    /// Propagation sweeps the GPU kernel ran. The reference solver does not sweep and leaves it 0.
     pub sweeps: u32,
+    /// Cells collapsed to a single tile by a choice.
     pub collapses: u32,
+    /// Times the region started again from its initial domains after a contradiction. The
+    /// reference solver never restarts and leaves it 0.
     pub restarts: u32,
+    /// Times a contradiction was recovered from by undoing earlier choices.
     pub backtracks: u32,
+    /// Steps taken in all. On the GPU this counts every step, sweeps that leave propagation still
+    /// moving included, so it depends on the order the lanes ran in; [`RegionStats::work`] does not.
     pub steps: u32,
     /// Contradictions met, including those recovered from.
     pub tries: u32,
@@ -114,7 +121,9 @@ pub struct RegionStats {
 /// One region result per region of the batch, in the batch's order.
 #[derive(Clone, Debug)]
 pub struct BatchResult {
+    /// How each region ended.
     pub statuses: Vec<RegionStatus>,
+    /// What each region's solve cost.
     pub stats: Vec<RegionStats>,
     /// Every region's final domains, one region after another. Only a solved region's are decided.
     pub domains: Domains,
@@ -138,28 +147,55 @@ pub struct JobId(pub u64);
 /// Why a batch could not be started or finished.
 #[derive(Error, Debug)]
 pub enum SolverError {
+    /// A batch was started while another is still running.
     #[error("a batch is already running")]
     Busy,
+    /// A job was polled or waited on that is not the running batch.
     #[error("job {0:?} is not the running one")]
     UnknownJob(JobId),
+    /// The batch's ids, seeds and cells do not agree with each other or with the rule set, or the
+    /// batch is empty; with what is wrong.
     #[error("the batch is malformed: {0}")]
     Malformed(String),
+    /// The batch holds more regions than the solver takes in one batch of this region shape.
     #[error("{regions} regions exceed the solver's batch limit of {max}")]
-    BatchTooLarge { regions: usize, max: u32 },
+    BatchTooLarge {
+        /// How many regions the batch holds.
+        regions: usize,
+        /// The most regions one batch of this shape may hold.
+        max: u32,
+    },
+    /// A region needs more workgroup storage than the device offers. A smaller chunk, a smaller
+    /// halo or fewer tiles all reduce it.
     #[error(
         "a region of {needed} B of workgroup storage does not fit the device's {available} B; \
          use a smaller chunk, a smaller halo or fewer tiles"
     )]
-    WorkgroupStorage { needed: u32, available: u32 },
+    WorkgroupStorage {
+        /// The workgroup storage a region needs, in bytes.
+        needed: u32,
+        /// The workgroup storage the device offers, in bytes.
+        available: u32,
+    },
+    /// The solver restored a checkpoint that holds an empty cell, which the rules cannot cause: a
+    /// bug in the solver, which fails the batch.
     #[error("the solver restored a checkpoint holding an empty cell in region {region}")]
-    BadCheckpoint { region: u32 },
+    BadCheckpoint {
+        /// The region, as an index into the batch.
+        region: u32,
+    },
     /// The device said the batch finished, but region `region` never reported: the driver ended
     /// the work without running it to the end, and nothing that was read back is a result.
     #[error(
         "the device finished the batch but region {region} never reported; the compute driver \
          dropped the work"
     )]
-    NoReport { region: u32 },
+    NoReport {
+        /// The region, as an index into the batch.
+        region: u32,
+    },
+    /// The compute backend failed, or the device returned something the solver cannot read; with
+    /// what went wrong.
     #[error("compute backend: {0}")]
     Backend(String),
 }

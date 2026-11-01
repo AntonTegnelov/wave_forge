@@ -26,7 +26,9 @@ pub enum ChunkEvent {
     /// The chunk could not be generated. Asking again would fail the same way, so the generator
     /// leaves it alone until it is imported ([`WorldGenerator::import`]).
     Failed {
+        /// The chunk.
         chunk: ChunkCoord,
+        /// How the last attempt to solve it ended.
         status: RegionStatus,
     },
 }

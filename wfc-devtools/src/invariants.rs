@@ -38,8 +38,11 @@ pub const AXIS_OFFSETS: [(isize, isize, isize); 6] = [
 /// and renderers want, and what the CLI's text output reads back into.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileGrid {
+    /// Cells along x.
     pub width: usize,
+    /// Cells along y.
     pub height: usize,
+    /// Cells along z.
     pub depth: usize,
     tiles: Vec<usize>,
 }
@@ -264,10 +267,15 @@ impl TileGrid {
 /// One broken adjacency: `tile` at `cell` does not allow `neighbor_tile` at `neighbor` along `axis`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
+    /// The cell, as `(x, y, z)`.
     pub cell: (usize, usize, usize),
+    /// The tile at `cell`.
     pub tile: usize,
+    /// The axis index from `cell` to `neighbor`.
     pub axis: usize,
+    /// The neighbouring cell, as `(x, y, z)`.
     pub neighbor: (usize, usize, usize),
+    /// The tile at `neighbor`.
     pub neighbor_tile: usize,
 }
 

@@ -58,7 +58,7 @@ fn generated_at_once(seed: u64, wide: i32) -> WorldGenerator<BlockSolver<WgpuBac
 /// What one cut cost to generate again, against the first generation of the whole city.
 #[derive(Debug)]
 struct Cut {
-    cut: i32,
+    at: i32,
     changed: usize,
     replayed: u32,
     batches: u32,
@@ -116,7 +116,7 @@ fn each_cut(seed: u64) -> Vec<Cut> {
             let got = tiles(&streamed);
             let after = *streamed.stats();
             let result = Cut {
-                cut,
+                at: cut,
                 changed: expected
                     .iter()
                     .filter(|(coord, tiles)| got.get(coord) != Some(tiles))
@@ -128,7 +128,7 @@ fn each_cut(seed: u64) -> Vec<Cut> {
             eprintln!(
                 "partial_eviction: seed {seed}, cut {}: {evicted} chunks evicted and generated \
                  again in {} batches, {:.0} ms, {} repairs replayed, {} chunks changed",
-                result.cut, result.batches, result.solver_ms, result.replayed, result.changed
+                result.at, result.batches, result.solver_ms, result.replayed, result.changed
             );
             result
         })

@@ -332,6 +332,9 @@ impl ModulePrototype {
     }
 
     /// The face along `axis` in the prototype's own frame.
+    ///
+    /// # Panics
+    /// If `axis` is not one of the six axes.
     #[must_use]
     pub fn face(&self, axis: usize) -> Face {
         match axis {

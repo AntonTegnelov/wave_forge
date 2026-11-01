@@ -31,3 +31,6 @@ wfc-core = { path = "../wfc-core", features = ["reference"] }
 # The city rule set the benchmarks measure, and the invariant checker.
 wfc-devtools = { path = "../wfc-devtools" }
 wfc-rules = { path = "../wfc-rules" }
+
+[lints]
+workspace = true

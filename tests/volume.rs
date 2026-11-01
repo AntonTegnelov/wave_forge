@@ -133,7 +133,7 @@ fn z_is_refused_outside_a_volume() {
 
     assert!(
         matches!(&result, Err(PackError::Invalid { stage, message })
-            if stage == "tall" && message.contains("Z")),
+            if stage == "tall" && message.contains('Z')),
         "{result:?}"
     );
 }

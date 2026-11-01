@@ -14,6 +14,10 @@ use wave_forge::{ChunkCoord, FocusPoint};
 
 const SIZE: [u32; 2] = [8, 8];
 
+#[expect(
+    clippy::unnecessary_box_returns,
+    reason = "an expression's operands are boxed"
+)]
 fn b(expr: Expr) -> Box<Expr> {
     Box::new(expr)
 }

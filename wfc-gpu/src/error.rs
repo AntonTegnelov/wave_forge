@@ -19,10 +19,20 @@ pub enum GpuError {
         "a region needs {needed} B of workgroup memory but the device offers {available} B; \
          use a smaller chunk, a smaller halo or fewer tiles"
     )]
-    WorkgroupStorage { needed: u32, available: u32 },
+    WorkgroupStorage {
+        /// The workgroup memory a region needs, in bytes.
+        needed: u32,
+        /// The workgroup memory the device offers, in bytes.
+        available: u32,
+    },
     /// The configuration asks for more invocations per workgroup than the device allows.
     #[error("{wanted} invocations per workgroup, but the device allows {available}")]
-    Invocations { wanted: u32, available: u32 },
+    Invocations {
+        /// The invocations per workgroup the configuration asks for.
+        wanted: u32,
+        /// The most invocations per workgroup the device allows.
+        available: u32,
+    },
 }
 
 impl GpuError {

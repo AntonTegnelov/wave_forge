@@ -194,6 +194,7 @@ impl WgpuBackend {
         // named by `pipeline_cache_key`, from the adapter's vendor and device, so only such a cache
         // is ever loaded; `fallback` makes wgpu start empty when the driver sees the data is stale,
         // and `create_pipeline` deletes the file when the driver fails on it instead.
+        #[allow(unsafe_code, reason = "sound as the SAFETY comment above says")]
         let cache = unsafe {
             self.device
                 .create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
@@ -339,11 +340,10 @@ impl ComputeBackend for WgpuBackend {
                 Some(error @ (wgpu::Error::OutOfMemory { .. } | wgpu::Error::Internal { .. })),
                 Some((_, path)),
             ) => {
-                let mut stale = self
+                *self
                     .stale_cache
                     .lock()
-                    .expect("no thread panics holding the lock");
-                *stale = true;
+                    .expect("no thread panics holding the lock") = true;
                 return Err(match std::fs::remove_file(path) {
                     Err(reason) if reason.kind() != std::io::ErrorKind::NotFound => {
                         BackendError::Cache {
@@ -473,9 +473,11 @@ impl ComputeBackend for WgpuBackend {
                 self.limits.workgroups
             )));
         }
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, binding, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);

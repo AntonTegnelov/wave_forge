@@ -41,18 +41,34 @@ pub struct BackendLimits {
 /// Why a backend could not do something.
 #[derive(Error, Debug)]
 pub enum BackendError {
+    /// No compute device could be found or opened; with why.
     #[error("no compute device is available: {0}")]
     NoDevice(String),
+    /// The kernel did not compile into a pipeline; with the compiler's message.
     #[error("the kernel did not compile: {0}")]
     Kernel(String),
+    /// A buffer could not be created.
     #[error("a buffer of {bytes} B could not be created: {reason}")]
-    Buffer { bytes: u64, reason: String },
+    Buffer {
+        /// The buffer's size, in bytes.
+        bytes: u64,
+        /// Why it could not be created.
+        reason: String,
+    },
+    /// A dispatch could not be submitted or its progress polled; with why.
     #[error("the dispatch failed: {0}")]
     Dispatch(String),
+    /// A readback buffer could not be mapped or read; with why.
     #[error("reading a buffer back failed: {0}")]
     Readback(String),
+    /// The pipeline cache file or its directory could not be read, written or deleted.
     #[error("the pipeline cache at {path} could not be read or written: {reason}")]
-    Cache { path: String, reason: String },
+    Cache {
+        /// The cache file or directory.
+        path: String,
+        /// Why it could not be read or written.
+        reason: String,
+    },
     /// The driver failed to make a pipeline from the cache, most likely one an older driver wrote
     /// that this one does not refuse as it should, and lost the device doing so. The file is
     /// deleted, so a new device starts without it.
@@ -60,7 +76,12 @@ pub enum BackendError {
         "the driver failed on the pipeline cache at {path} ({reason}), most likely one an older \
          driver wrote; it is deleted, and generating again starts without it"
     )]
-    StaleCache { path: String, reason: String },
+    StaleCache {
+        /// The cache file, now deleted.
+        path: String,
+        /// The driver's error.
+        reason: String,
+    },
 }
 
 /// A compute API the block solver can run on.

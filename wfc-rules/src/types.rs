@@ -106,7 +106,9 @@ impl AdjacencyRules {
     /// Returns the opposite axis index.
     /// Assumes standard 3D axis convention:
     /// 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
-    /// Panics if the input axis is invalid (>= `num_axes`, usually 6).
+    ///
+    /// # Panics
+    /// If the axis is not one of the six.
     #[inline]
     #[must_use]
     pub fn opposite_axis(&self, axis: usize) -> usize {

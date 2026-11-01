@@ -176,8 +176,8 @@ fn cells_of_nothing_levels_the_wrong_way_or_a_coarse_volume_are_refused() {
 fn sealed_runtime(chunks: &[ChunkCoord]) -> Runtime {
     let pack = PACK
         .replace(
-            r#"level: (-24.0, 4.0),"#,
-            r#"level: (-24.0, 4.0), barrier: Some(1.5),"#,
+            "level: (-24.0, 4.0),",
+            "level: (-24.0, 4.0), barrier: Some(1.5),",
         )
         .replace(
             "    ],\n)",

@@ -189,7 +189,7 @@ pub fn water_banks<'a>(
                 ([sx as u32, sy as u32], [sx as u32, sy as u32]),
                 "the water's and the ground's chunks share a size"
             );
-            let level = sea.map_or(level.get(i, j), |sea| level.get(i, j).max(sea));
+            let level = sea.map_or_else(|| level.get(i, j), |sea| level.get(i, j).max(sea));
             wet.push(level - floor.get(i, j) > WET);
         }
     }

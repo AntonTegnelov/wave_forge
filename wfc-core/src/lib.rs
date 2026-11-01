@@ -36,35 +36,73 @@ use thiserror::Error;
 pub enum ModelError {
     /// A rule set the solver cannot represent.
     #[error("a rule set of {tiles} tiles is outside the supported range of 1 to {max}")]
-    TileCount { tiles: usize, max: u32 },
+    TileCount {
+        /// How many tiles the rule set has.
+        tiles: usize,
+        /// The most tiles a solver supports, [`MAX_TILES`].
+        max: u32,
+    },
     /// Rules defined over the wrong number of directions.
     #[error("rules over {axes} axes, but a solver needs the 6 of a cubic grid")]
-    AxisCount { axes: usize },
+    AxisCount {
+        /// How many axes the rules are defined over.
+        axes: usize,
+    },
     /// One weight per tile is required.
     #[error("{tiles} tiles but {weights} weights")]
-    WeightCount { tiles: usize, weights: usize },
+    WeightCount {
+        /// How many tiles the rule set has.
+        tiles: usize,
+        /// How many weights were given.
+        weights: usize,
+    },
     /// A weight that cannot be used.
     #[error("tile {tile} has weight {weight}, which is not a finite, non-negative number")]
-    Weight { tile: usize, weight: f32 },
+    Weight {
+        /// The tile with the weight.
+        tile: usize,
+        /// The weight, negative or not finite.
+        weight: f32,
+    },
     /// Every tile has weight zero, so nothing could ever be chosen.
     #[error("no tile has a positive weight")]
     NoPositiveWeight,
     /// Domain words that do not match the cells they describe.
     #[error("{expected} words describe these cells, but {got} were given")]
-    WordCount { expected: usize, got: usize },
+    WordCount {
+        /// How many words the cells take.
+        expected: usize,
+        /// How many words were given.
+        got: usize,
+    },
     /// A chunk outside the world's extent.
     #[error("chunk ({}, {}, {}) is outside the world", chunk.x, chunk.y, chunk.z)]
-    OutsideWorld { chunk: crate::chunk::ChunkCoord },
+    OutsideWorld {
+        /// The chunk.
+        chunk: crate::chunk::ChunkCoord,
+    },
     /// A chunk with the wrong number of cells.
     #[error("a chunk of this world holds {expected} cells, but {got} were given")]
-    ChunkCells { expected: usize, got: usize },
+    ChunkCells {
+        /// How many cells a chunk of this world holds.
+        expected: usize,
+        /// How many cells were given.
+        got: usize,
+    },
+    /// A chunk holding a tile the rule set does not have.
     #[error("chunk ({}, {}, {}) holds tile {tile}, but the rule set has {tiles}", chunk.x, chunk.y, chunk.z)]
     UnknownTile {
+        /// The chunk.
         chunk: crate::chunk::ChunkCoord,
+        /// The first tile in the chunk that the rule set does not have.
         tile: u16,
+        /// How many tiles the rule set has.
         tiles: u32,
     },
     /// A cell that should have been decided by now.
     #[error("cell ({}, {}, {}) is not decided", cell[0], cell[1], cell[2])]
-    Undecided { cell: crate::chunk::WorldCell },
+    Undecided {
+        /// The cell, in world coordinates.
+        cell: crate::chunk::WorldCell,
+    },
 }

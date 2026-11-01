@@ -20,26 +20,47 @@ pub enum Brush {
     /// of the stage whose centre lies within `radius` of the path gains `strength` times how near
     /// it lies, 1 on the path and falling smoothly to 0 at the radius.
     Raise {
+        /// The field stage raised.
         stage: String,
+        /// How far from the path a column is raised, in cells.
         radius: f32,
+        /// What a column on the path gains; negative lowers it.
         strength: f32,
     },
     /// Moves each column of a field stage within `radius` of the path toward the average of the
     /// nine columns around it, by `strength`, from 0 to 1, times how near it lies. The stage has to
     /// be one a sample reads without chunks ([`Runtime::sample`]).
     Smooth {
+        /// The field stage smoothed.
         stage: String,
+        /// How far from the path a column is smoothed, in cells.
         radius: f32,
+        /// How far a column on the path moves toward the average, from 0 to 1.
         strength: f32,
     },
     /// Digs balls of `radius` out of a Volume or Carve stage along the path, half a radius apart,
     /// so the stroke leaves a tunnel as wide as the brush.
-    Dig { stage: String, radius: f32 },
+    Dig {
+        /// The Volume or Carve stage dug.
+        stage: String,
+        /// Each ball's radius, in cells.
+        radius: f32,
+    },
     /// Fills balls into a volume along the path, as [`Brush::Dig`] digs them.
-    Fill { stage: String, radius: f32 },
+    Fill {
+        /// The volume stage filled.
+        stage: String,
+        /// Each ball's radius, in cells.
+        radius: f32,
+    },
     /// Removes every point of the point stages `stages` standing within `radius` of the path on
     /// the ground plane, of the chunks the runtime holds.
-    Remove { stages: Vec<String>, radius: f32 },
+    Remove {
+        /// The point stages whose points are removed.
+        stages: Vec<String>,
+        /// How far from the path a point is removed, in cells on the ground plane.
+        radius: f32,
+    },
 }
 
 /// What a stroke reads of the world it paints on. A [`Runtime`] is one; an engine that keeps the

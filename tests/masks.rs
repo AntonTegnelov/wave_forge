@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::loader::{RuleFile, parse_rule_file};
 use wave_forge::stages::brushes::{Brush, stroke};
-use wave_forge::stages::{Edits, Pack, Runtime};
+use wave_forge::stages::{Pack, Runtime};
 use wave_forge::towns::WfcTowns;
 use wave_forge::{ChunkCoord, ChunkShape, FocusPoint};
 use wfc_core::reference::ReferenceSolver;
@@ -78,9 +78,7 @@ fn paint(runtime: &mut Runtime, brush: &Brush, path: &[[f32; 3]]) {
     let mut log = runtime.save().edits;
     log.log
         .extend(stroke(runtime, brush, path).expect("a brush of a field"));
-    runtime
-        .set_edits(&Edits { log: log.log })
-        .expect("raises of a field");
+    runtime.set_edits(&log).expect("raises of a field");
 }
 
 /// The tile names of every chunk of the town, by chunk, and each column's tiles bottom up.
